@@ -159,7 +159,9 @@ export default function CoacherPage() {
             
             // Lägg till månadsintäkt för aktivt membership
             // Om membership startade före eller under månaden och är aktivt, räkna en månads intäkt
-            if (membershipStart <= endDate && (isActive || !membershipEnd || membershipEnd >= startDate)) {
+            const endDateObj = viewMode === 'month' ? periodEndDate : new Date(endDate);
+            const startDateObj = viewMode === 'month' ? periodStartDate : new Date(startDate);
+            if (membershipStart <= endDateObj && (isActive || !membershipEnd || membershipEnd >= startDateObj)) {
               statsMap[coachFullName].monthlyRevenue += customer.price;
             }
           }

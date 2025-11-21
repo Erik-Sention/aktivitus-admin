@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #F0F4F8;
+  --foreground: #1e293b;
+  --aktivitus-blue: #0C3B5C;
+  --aktivitus-light-blue: #1E5A7D;
 }
 
 @theme inline {
@@ -10,6 +12,8 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --color-aktivitus-blue: var(--aktivitus-blue);
+  --color-aktivitus-light-blue: var(--aktivitus-light-blue);
 }
 
 @media (prefers-color-scheme: dark) {

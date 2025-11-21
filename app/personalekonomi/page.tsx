@@ -1,16 +1,17 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useCustomers } from '@/lib/CustomerContext';
 import { getTimeBudget, isMembershipTimeBudget } from '@/lib/timeBudgets';
 import { isMembershipService, isTestService, PLACES, PAYMENT_STATUSES } from '@/lib/constants';
 import { getCoachFullName } from '@/lib/coachMapping';
-import { getCoachHourlyRateSync } from '@/lib/coachProfiles';
+import { getCoachHourlyRateSync, getCoachProfileSync } from '@/lib/coachProfiles';
 import { getTotalAdministrativeHoursForMonthSync } from '@/lib/administrativeHours';
 import { getAllPaymentStatuses, subscribeToPaymentStatuses, updatePaymentStatus } from '@/lib/realtimeDatabase';
 import { Customer, ServiceEntry, Place, PaymentStatus } from '@/types';
-import { DollarSign, Clock, Users, TrendingUp, MapPin, FileCheck, CheckCircle, CheckSquare, Square, FileText } from 'lucide-react';
+import { DollarSign, Clock, Users, TrendingUp, MapPin, FileCheck, CheckCircle, CheckSquare, Square, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
+import { PaymentStatusSelect } from '@/components/PaymentStatusSelect';
 
 interface CoachHours {
   coach: string;
@@ -33,8 +34,59 @@ export default function PersonalekonomiPage() {
   const [selectedPaymentStatuses, setSelectedPaymentStatuses] = useState<PaymentStatus[]>([]);
   const [selectedCoaches, setSelectedCoaches] = useState<Set<string>>(new Set());
   
+  // Navigera månader - korrekt hantering av månadsändringar
+  const handlePreviousMonth = () => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    let newYear = year;
+    let newMonth = month - 1;
+    
+    // Om månaden blir 0, gå till föregående år
+    if (newMonth === 0) {
+      newMonth = 12;
+      newYear = year - 1;
+    }
+    
+    setSelectedMonth(`${newYear}-${String(newMonth).padStart(2, '0')}`);
+  };
+  
+  const handleNextMonth = () => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    let newYear = year;
+    let newMonth = month + 1;
+    
+    // Om månaden blir 13, gå till nästa år
+    if (newMonth === 13) {
+      newMonth = 1;
+      newYear = year + 1;
+    }
+    
+    setSelectedMonth(`${newYear}-${String(newMonth).padStart(2, '0')}`);
+  };
+  
+  const handleCurrentMonth = () => {
+    setSelectedMonth(new Date().toISOString().slice(0, 7));
+  };
+  
   // Spara utbetalningsstatusar per coach och månad - nu från Firebase
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, PaymentStatus>>({});
+
+  const handleCoachPaymentStatusChange = useCallback(
+    async (coachName: string, status: PaymentStatus) => {
+      const statusKey = `${coachName}_${selectedMonth}`;
+      setPaymentStatuses((prev) => ({
+        ...prev,
+        [statusKey]: status,
+      }));
+
+      try {
+        await updatePaymentStatus(statusKey, status);
+      } catch (error) {
+        console.error('Error saving payment status:', error);
+        alert('Kunde inte spara utbetalningsstatus. Försök igen.');
+      }
+    },
+    [selectedMonth]
+  );
 
   // Ladda utbetalningsstatusar från Firebase
   useEffect(() => {
@@ -121,50 +173,100 @@ export default function PersonalekonomiPage() {
       }
 
       // Hantera medlemskap (månadsvis tidsbudget)
+      // Gå igenom ALLA memberships i serviceHistory, inte bara huvudtjänsten
+      const allMemberships: ServiceEntry[] = [];
+      
+      // Lägg till huvudtjänsten om det är ett membership
       if (isMembershipService(customer.service)) {
-        // Kolla om medlemskapet är aktivt under vald månad
-        const membershipStart = new Date(customer.date);
+        allMemberships.push({
+          id: 'main',
+          service: customer.service as any,
+          price: customer.price,
+          date: customer.date,
+          status: customer.status as any,
+          endDate: undefined,
+          coach: customer.coach,
+        });
+      }
+      
+      // Lägg till alla memberships från serviceHistory
+      if (customer.serviceHistory && customer.serviceHistory.length > 0) {
+        customer.serviceHistory.forEach((entry: ServiceEntry) => {
+          if (isMembershipService(entry.service)) {
+            // Kontrollera om detta membership inte redan är huvudtjänsten
+            const isMainService = entry.service === customer.service && 
+                                  new Date(entry.date).getTime() === new Date(customer.date).getTime();
+            if (!isMainService) {
+              allMemberships.push(entry);
+            }
+          }
+        });
+      }
+      
+      // Gå igenom alla memberships och kolla om de var aktiva under vald månad
+      allMemberships.forEach((membership: ServiceEntry) => {
+        const membershipStart = new Date(membership.date);
         membershipStart.setHours(0, 0, 0, 0);
         
         // Om medlemskapet startade innan eller under vald månad
         if (membershipStart <= endDate) {
-          // Kolla om medlemskapet är aktivt eller avslutades efter vald månad
+          // Bestäm slutdatum baserat på status och endDate
           let membershipEnd: Date | null = null;
-          let isActive = customer.status === 'Aktiv';
+          let isActive = membership.status === 'Aktiv';
           
-          // Kolla serviceHistory för mer exakt information
-          if (customer.serviceHistory && customer.serviceHistory.length > 0) {
-            const activeService = customer.serviceHistory.find(
-              (s: ServiceEntry) => s.status === 'Aktiv' && s.service === customer.service
-            );
-            if (activeService) {
-              isActive = activeService.status === 'Aktiv';
-              if (activeService.endDate) {
-                membershipEnd = new Date(activeService.endDate);
-                membershipEnd.setHours(23, 59, 59, 999);
-              }
-            } else {
-              // Om ingen aktiv service finns, kolla om någon avslutades efter vald månad
-              const endedService = customer.serviceHistory
-                .filter((s: ServiceEntry) => s.service === customer.service)
-                .sort((a: ServiceEntry, b: ServiceEntry) => 
-                  new Date(b.date).getTime() - new Date(a.date).getTime()
-                )[0];
-              if (endedService?.endDate) {
-                membershipEnd = new Date(endedService.endDate);
-                membershipEnd.setHours(23, 59, 59, 999);
-                isActive = false;
-              }
-            }
+          if (membership.endDate) {
+            membershipEnd = new Date(membership.endDate);
+            membershipEnd.setHours(23, 59, 59, 999);
+            // Om det finns ett endDate, är det inte aktivt längre
+            isActive = false;
+          } else if (membership.status === 'Aktiv') {
+            // Om aktivt utan endDate, räkna till slutet av vald månad
+            membershipEnd = endDate;
+            isActive = true;
+          } else {
+            // Om inaktiv utan endDate, använd startdatum som slutdatum
+            membershipEnd = membershipStart;
+            isActive = false;
           }
 
-          // Om medlemskapet är aktivt eller avslutades efter vald månad
-          if (isActive || !membershipEnd || membershipEnd >= startDate) {
-            const timeBudget = getTimeBudget(customer.service, customer.isSeniorCoach);
-            hoursMap[coachFullName].membershipHours += timeBudget;
+          // Kolla om medlemskapet överlappar med vald månad
+          // Medlemskapet måste ha startat före eller under månaden och slutat efter eller under månaden
+          if (membershipStart <= endDate && membershipEnd && membershipEnd >= startDate) {
+            // Hämta coach för detta membership (använd membership.coach eller fallback till customer.coach)
+            const membershipCoach = membership.coach || customer.coach;
+            if (!membershipCoach) return;
+            
+            const membershipCoachFullName = getCoachFullName(membershipCoach);
+            if (!membershipCoachFullName) return;
+            
+            // Initiera coach om den inte finns
+            if (!hoursMap[membershipCoachFullName]) {
+              const statusKey = `${membershipCoachFullName}_${selectedMonth}`;
+              const defaultStatus = paymentStatuses[statusKey] || 'Väntar på fullständig faktureringsinfo';
+              
+              const adminHours = getTotalAdministrativeHoursForMonthSync(membershipCoachFullName, year, month);
+              
+              hoursMap[membershipCoachFullName] = {
+                coach: membershipCoachFullName,
+                membershipHours: 0,
+                testHours: 0,
+                otherHours: 0,
+                administrativeHours: adminHours,
+                totalHours: adminHours,
+                hourlyRate: getCoachHourlyRateSync(membershipCoachFullName),
+                totalCost: 0,
+                paymentStatus: defaultStatus,
+              };
+            }
+            
+            // Hämta senior coach status från coach-profilen
+            const coachProfile = getCoachProfileSync(membershipCoach);
+            const isSeniorCoach = coachProfile?.isSeniorCoach || customer.isSeniorCoach || false;
+            const timeBudget = getTimeBudget(membership.service, isSeniorCoach);
+            hoursMap[membershipCoachFullName].membershipHours += timeBudget;
           }
         }
-      }
+      });
 
       // Hantera tester och andra tjänster (engångstidsbudget)
       if (isTestService(customer.service) || (!isMembershipService(customer.service) && !customer.service.includes('Membership'))) {
@@ -228,7 +330,16 @@ export default function PersonalekonomiPage() {
       }
     });
 
-    return Object.values(hoursMap).sort((a, b) => b.totalHours - a.totalHours);
+    // Filtrera bort coaches där alla timmar och kostnad är 0
+    const coachesWithHours = Object.values(hoursMap).filter((coach) => {
+      return coach.membershipHours > 0 || 
+             coach.testHours > 0 || 
+             coach.otherHours > 0 || 
+             coach.administrativeHours > 0 || 
+             coach.totalCost > 0;
+    });
+    
+    return coachesWithHours.sort((a, b) => b.totalHours - a.totalHours);
   }, [filteredCustomers, selectedMonth, paymentStatuses]);
 
   // Totalt antal timmar och kostnad
@@ -279,17 +390,42 @@ export default function PersonalekonomiPage() {
 
       {/* Filter */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Månadsval */}
+        {/* Månadsval med navigering */}
         <div className="bg-white rounded-lg shadow p-6">
           <label className="block text-sm font-medium text-gray-900 mb-2">
             Välj månad
           </label>
-          <input
-            type="month"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePreviousMonth}
+              className="p-2 hover:bg-gray-100 rounded-lg transition"
+              title="Föregående månad"
+            >
+              <ChevronLeft className="w-5 h-5 text-gray-700" />
+            </button>
+            
+            <input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+            />
+            
+            <button
+              onClick={handleNextMonth}
+              className="p-2 hover:bg-gray-100 rounded-lg transition"
+              title="Nästa månad"
+            >
+              <ChevronRight className="w-5 h-5 text-gray-700" />
+            </button>
+            
+            <button
+              onClick={handleCurrentMonth}
+              className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition font-medium whitespace-nowrap"
+            >
+              Idag
+            </button>
+          </div>
         </div>
 
         {/* Ort-filter */}
@@ -640,73 +776,11 @@ export default function PersonalekonomiPage() {
                       })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="relative group">
-                        <button
-                          className={`px-3 py-1 text-xs font-medium rounded transition ${
-                            coach.paymentStatus === 'Betald'
-                              ? 'bg-green-100 text-green-800'
-                              : coach.paymentStatus === 'Väntar på fullständig faktureringsinfo'
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : coach.paymentStatus === 'Väntar på utbetalning'
-                              ? 'bg-blue-100 text-blue-800'
-                              : coach.paymentStatus === 'Delvis betald'
-                              ? 'bg-orange-100 text-orange-800'
-                              : coach.paymentStatus === 'Avbruten'
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {coach.paymentStatus} ▾
-                        </button>
-                        <div className="absolute left-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                          <div className="py-1">
-                            {PAYMENT_STATUSES.map((status) => {
-                              if (status === coach.paymentStatus) return null;
-                              
-                              return (
-                                <button
-                                  key={status}
-                                  onClick={async () => {
-                                    const statusKey = `${coach.coach}_${selectedMonth}`;
-                                    const newStatuses = {
-                                      ...paymentStatuses,
-                                      [statusKey]: status,
-                                    };
-                                    setPaymentStatuses(newStatuses);
-                                    
-                                    // Spara till Firebase
-                                    try {
-                                      await updatePaymentStatus(statusKey, status);
-                                    } catch (error) {
-                                      console.error('Error saving payment status:', error);
-                                      alert('Kunde inte spara utbetalningsstatus. Försök igen.');
-                                    }
-                                  }}
-                                  className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-50 flex items-center gap-2 ${
-                                    status === 'Ej aktuell' ? 'text-red-600 font-medium' : 'text-gray-700'
-                                  }`}
-                                >
-                                  <span className={`px-2 py-0.5 text-xs rounded ${
-                                    status === 'Betald'
-                                      ? 'bg-green-100 text-green-800'
-                                      : status === 'Väntar på fullständig faktureringsinfo'
-                                      ? 'bg-yellow-100 text-yellow-800'
-                                      : status === 'Väntar på utbetalning'
-                                      ? 'bg-blue-100 text-blue-800'
-                                      : status === 'Delvis betald'
-                                      ? 'bg-orange-100 text-orange-800'
-                                      : status === 'Avbruten'
-                                      ? 'bg-red-100 text-red-800'
-                                      : 'bg-gray-100 text-gray-800'
-                                  }`}>
-                                    {status}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
+                      <PaymentStatusSelect
+                        value={coach.paymentStatus}
+                        options={PAYMENT_STATUSES}
+                        onChange={(status) => handleCoachPaymentStatusChange(coach.coach, status)}
+                      />
                     </td>
                   </tr>
                 ))

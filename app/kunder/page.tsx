@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import { useCustomers } from '@/lib/CustomerContext';
-import { Search, Edit, Trash2, Filter, Download, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, X } from 'lucide-react';
+import { Search, Filter, Download, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, X } from 'lucide-react';
 import { SERVICE_COLORS, isMembershipService, PLACES, SERVICES } from '@/lib/constants';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
@@ -12,11 +12,11 @@ import { Customer } from '@/types';
 import { getUserRoleSync, getCurrentUser } from '@/lib/auth';
 import { logPageView, logCustomerView } from '@/lib/activityLogger';
 
-type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalRevenue';
+type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'totalRevenue';
 type SortDirection = 'asc' | 'desc';
 
 export default function CustomersPage() {
-  const { customers, deleteCustomer } = useCustomers();
+  const { customers } = useCustomers();
   const [searchFirstName, setSearchFirstName] = useState('');
   const [searchLastName, setSearchLastName] = useState('');
   const [searchEmail, setSearchEmail] = useState('');
@@ -104,17 +104,6 @@ export default function CustomersPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Är du säker på att du vill ta bort denna kund?')) {
-      try {
-        await deleteCustomer(id);
-      } catch (error) {
-        console.error('Fel vid borttagning av kund:', error);
-        alert('Kunde inte ta bort kund. Kontrollera Firebase-konfigurationen.');
-      }
-    }
-  };
-
   // Funktion för att kolla om kunden har ett aktivt membership i historiken
   const hasActiveMembership = (customer: Customer): boolean => {
     if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
@@ -149,45 +138,136 @@ export default function CustomersPage() {
     return customer.service;
   };
 
-  // Funktion för att räkna medlemstid i månader
+  // Funktion för att räkna medlemstid i månader - endast aktiva perioder
+  // Räknar alla memberships som har varit aktiva, oavsett nuvarande status
   const getMembershipDuration = (customer: Customer): number | null => {
+    // Om ingen serviceHistory finns, kolla huvudtjänsten
     if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
       if (isMembershipService(customer.service) && customer.status === 'Aktiv') {
-        const months = (new Date().getTime() - new Date(customer.date).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-        return Math.round(months * 10) / 10;
+        const startDate = new Date(customer.date);
+        const endDate = new Date();
+        // Beräkna antal månader korrekt
+        const monthsDiff = (endDate.getFullYear() - startDate.getFullYear()) * 12 + 
+                          (endDate.getMonth() - startDate.getMonth());
+        // Lägg till 1 om vi är i samma månad eller om det har gått minst en månad
+        const actualMonths = startDate.getDate() <= endDate.getDate() ? monthsDiff + 1 : monthsDiff;
+        return Math.round(Math.max(1, actualMonths) * 10) / 10;
+      }
+      return null;
+    }
+    
+    // Hitta alla memberships (både aktiva och inaktiva)
+    // Tester räknas inte eftersom de är engångstjänster, inte pågående medlemskap
+    const allMemberships = customer.serviceHistory.filter((entry) => 
+      isMembershipService(entry.service)
+    );
+    
+    if (allMemberships.length === 0) return null;
+    
+    // Skapa en Set för att hålla koll på vilka månader som redan räknats
+    // Format: "YYYY-MM" för att undvika dubbelräkning vid överlappande perioder
+    const activeMonthsSet = new Set<string>();
+    
+    allMemberships.forEach((membership) => {
+      const startDate = new Date(membership.date);
+      // Bestäm slutdatum:
+      // - Om status är 'Aktiv' och inget endDate finns: räkna till idag
+      // - Om endDate finns: använd endDate (membershipen var aktiv till dess)
+      // - Om status är 'Inaktiv' och inget endDate finns: hoppa över (kan inte beräkna)
+      let endDate: Date | null = null;
+      
+      if (membership.status === 'Aktiv') {
+        endDate = membership.endDate ? new Date(membership.endDate) : new Date();
+      } else if (membership.endDate) {
+        // Även om den är inaktiv nu, den var aktiv fram till endDate
+        endDate = new Date(membership.endDate);
+      } else {
+        // Inaktiv och inget slutdatum - hoppa över denna
+        return;
+      }
+      
+      // Normalisera till första dagen i månaden för korrekt beräkning
+      const start = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+      const end = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+      
+      // Lägg till varje månad mellan start och slut (inklusive båda)
+      const current = new Date(start);
+      while (current <= end) {
+        const monthKey = `${current.getFullYear()}-${String(current.getMonth() + 1).padStart(2, '0')}`;
+        activeMonthsSet.add(monthKey);
+        // Gå till nästa månad
+        current.setMonth(current.getMonth() + 1);
+      }
+    });
+    
+    // Returnera antalet unika aktiva månader
+    return Math.round(activeMonthsSet.size * 10) / 10;
+  };
+
+  // Funktion för att räkna totala månader från första medlemskapet till nu/senaste slutdatum
+  const getTotalMonthsFromStart = (customer: Customer): number | null => {
+    // Om ingen serviceHistory finns, kolla huvudtjänsten
+    if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
+      if (isMembershipService(customer.service)) {
+        const startDate = new Date(customer.date);
+        const endDate = customer.status === 'Aktiv' ? new Date() : (customer.date ? new Date(customer.date) : new Date());
+        const monthsDiff = (endDate.getFullYear() - startDate.getFullYear()) * 12 + 
+                          (endDate.getMonth() - startDate.getMonth());
+        const actualMonths = startDate.getDate() <= endDate.getDate() ? monthsDiff + 1 : monthsDiff;
+        return Math.round(Math.max(1, actualMonths) * 10) / 10;
       }
       return null;
     }
     
     // Hitta alla memberships
-    const memberships = customer.serviceHistory.filter((entry) => 
+    const allMemberships = customer.serviceHistory.filter((entry) => 
       isMembershipService(entry.service)
     );
     
-    if (memberships.length === 0) return null;
+    if (allMemberships.length === 0) return null;
     
-    // Hitta första membership-datum
-    const firstMembership = memberships.reduce((earliest, current) => 
+    // Hitta första medlemskapet (tidigaste startdatum)
+    const firstMembership = allMemberships.reduce((earliest, current) => 
       new Date(current.date) < new Date(earliest.date) ? current : earliest
     );
     
-    // Hitta sista aktiva eller avslutade membership
-    const activeMembership = memberships.find((m) => m.status === 'Aktiv');
+    // Hitta senaste datumet (antingen aktivt till idag eller senaste slutdatum)
+    let latestDate = new Date();
     
+    // Kolla om det finns något aktivt medlemskap
+    const activeMembership = allMemberships.find(m => m.status === 'Aktiv');
     if (activeMembership) {
-      // Om aktivt membership, räkna från första till idag
-      const months = (new Date().getTime() - new Date(firstMembership.date).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-      return Math.round(months * 10) / 10;
+      // Om aktivt, räkna till idag
+      latestDate = new Date();
     } else {
-      // Om inget aktivt, hitta senaste avslutat och räkna till dess slutdatum
-      const lastMembership = memberships.reduce((latest, current) => 
-        new Date(current.date) > new Date(latest.date) ? current : latest
-      );
-      
-      const endDate = lastMembership.endDate || new Date();
-      const months = (new Date(endDate).getTime() - new Date(firstMembership.date).getTime()) / (1000 * 60 * 60 * 24 * 30.44);
-      return Math.round(months * 10) / 10;
+      // Om inget aktivt, hitta senaste slutdatumet
+      const membershipsWithEndDate = allMemberships.filter(m => m.endDate);
+      if (membershipsWithEndDate.length > 0) {
+        const latestEndDate = membershipsWithEndDate.reduce((latest, current) => {
+          const currentEndDate = new Date(current.endDate!);
+          const latestEndDate = new Date(latest.endDate!);
+          return currentEndDate > latestEndDate ? current : latest;
+        });
+        latestDate = new Date(latestEndDate.endDate!);
+      } else {
+        // Om inga slutdatum finns, använd senaste startdatumet
+        const latestStartDate = allMemberships.reduce((latest, current) => 
+          new Date(current.date) > new Date(latest.date) ? current : latest
+        );
+        latestDate = new Date(latestStartDate.date);
+      }
     }
+    
+    // Beräkna månader från första till senaste datumet
+    const startDate = new Date(firstMembership.date);
+    const start = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+    const end = new Date(latestDate.getFullYear(), latestDate.getMonth(), 1);
+    
+    const monthsDiff = (end.getFullYear() - start.getFullYear()) * 12 + 
+                      (end.getMonth() - start.getMonth());
+    const totalMonths = monthsDiff + 1; // Inkludera både start- och slutmånaden
+    
+    return Math.round(Math.max(1, totalMonths) * 10) / 10;
   };
 
   // Sorteringsfunktion
@@ -375,6 +455,10 @@ export default function CustomersPage() {
         case 'membershipDuration':
           aValue = getMembershipDuration(a) || 0;
           bValue = getMembershipDuration(b) || 0;
+          break;
+        case 'totalMonthsFromStart':
+          aValue = getTotalMonthsFromStart(a) || 0;
+          bValue = getTotalMonthsFromStart(b) || 0;
           break;
         case 'totalRevenue':
           aValue = getTotalRevenue(a);
@@ -714,8 +798,21 @@ export default function CustomersPage() {
                   onClick={() => handleSort('membershipDuration')}
                 >
                   <div className="flex items-center gap-1">
-                    Mån
+                    Aktiva månader
                     {sortField === 'membershipDuration' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('totalMonthsFromStart')}
+                >
+                  <div className="flex items-center gap-1">
+                    Månader från start
+                    {sortField === 'totalMonthsFromStart' ? (
                       sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
                     ) : (
                       <ArrowUpDown className="w-3 h-3 opacity-30" />
@@ -753,16 +850,13 @@ export default function CustomersPage() {
                   onClick={() => handleSort('date')}
                 >
                   <div className="flex items-center gap-1">
-                    Datum
+                    Startdatum
                     {sortField === 'date' ? (
                       sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
                     ) : (
                       <ArrowUpDown className="w-3 h-3 opacity-30" />
                     )}
                   </div>
-                </th>
-                <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
-                  Åtgärder
                 </th>
               </tr>
             </thead>
@@ -828,6 +922,18 @@ export default function CustomersPage() {
                     )}
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
+                    {(() => {
+                      const totalMonths = getTotalMonthsFromStart(customer);
+                      return totalMonths !== null ? (
+                        <div className="text-sm text-gray-900 font-medium">
+                          {totalMonths}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-400">-</div>
+                      );
+                    })()}
+                  </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
                     <div className="text-sm text-gray-900">
                       {customer.price}
                       <span className="text-xs text-gray-500 ml-0.5">
@@ -842,26 +948,7 @@ export default function CustomersPage() {
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
                     <div className="text-sm text-gray-600">
-                      {format(new Date(customer.date), 'd MMM', { locale: sv })}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap text-right text-sm font-medium">
-                    <div className="flex items-center justify-end gap-1">
-                      <Link
-                        href={`/kunder/${customer.id}`}
-                        onClick={() => logCustomerView(customer.id, customer.name)}
-                        className="text-[#1E5A7D] hover:text-[#0C3B5C] p-1.5 hover:bg-blue-50 rounded transition"
-                        title="Redigera"
-                      >
-                        <Edit className="w-3.5 h-3.5" />
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(customer.id)}
-                        className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-50 rounded transition"
-                        title="Ta bort"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {format(new Date(customer.date), 'yyyy-MM-dd', { locale: sv })}
                     </div>
                   </td>
                 </tr>

@@ -6,16 +6,57 @@ import { useCustomers } from '@/lib/CustomerContext';
 import { Customer } from '@/types';
 import { isMembershipService, INVOICE_STATUSES } from '@/lib/constants';
 import { InvoiceStatus } from '@/types';
-import { format, isAfter, isBefore, addMonths } from 'date-fns';
+import { format, isAfter, isBefore, addMonths, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { sv } from 'date-fns/locale';
-import { Download, CheckCircle, AlertCircle, Clock, Filter, Bell, XCircle, FileText, AlertTriangle } from 'lucide-react';
+import { Download, CheckCircle, AlertCircle, Clock, Filter, XCircle, ChevronLeft, ChevronRight, Square } from 'lucide-react';
 import Link from 'next/link';
+import { InvoiceStatusSelect } from '@/components/InvoiceStatusSelect';
 
 export default function InvoicingPage() {
   const { customers, updateCustomer } = useCustomers();
+  const [selectedMonth, setSelectedMonth] = useState<string>(
+    new Date().toISOString().slice(0, 7)
+  );
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Alla');
   const [selectedStatus, setSelectedStatus] = useState<string>('Alla');
   const [selectedPlace, setSelectedPlace] = useState<string>('Alla');
+  const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  const getInvoiceRowKey = (customerId: string, serviceId: string) => `${customerId}_${serviceId}`;
+  
+  // Navigera månader
+  const handlePreviousMonth = () => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    let newYear = year;
+    let newMonth = month - 1;
+    
+    // Om månaden blir 0, gå till föregående år
+    if (newMonth === 0) {
+      newMonth = 12;
+      newYear = year - 1;
+    }
+    
+    setSelectedMonth(`${newYear}-${String(newMonth).padStart(2, '0')}`);
+  };
+  
+  const handleNextMonth = () => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    let newYear = year;
+    let newMonth = month + 1;
+    
+    // Om månaden blir 13, gå till nästa år
+    if (newMonth === 13) {
+      newMonth = 1;
+      newYear = year + 1;
+    }
+    
+    setSelectedMonth(`${newYear}-${String(newMonth).padStart(2, '0')}`);
+  };
+  
+  const handleCurrentMonth = () => {
+    setSelectedMonth(new Date().toISOString().slice(0, 7));
+  };
 
   // Automatisk uppdatering av förfallna fakturor
   useEffect(() => {
@@ -47,13 +88,27 @@ export default function InvoicingPage() {
     });
   }, [customers, updateCustomer]);
 
-  // Samla alla aktiva membership-tjänster från alla kunder
+  // Beräkna månadsintervall för vald månad
+  const [year, month] = selectedMonth.split('-').map(Number);
+  const monthStart = startOfMonth(new Date(year, month - 1, 1));
+  const monthEnd = endOfMonth(new Date(year, month - 1, 1));
   const today = new Date();
-  const activeMembershipServices = customers.flatMap((customer) => {
+
+  // Samla alla membership-tjänster från alla kunder (både aktiva och inaktiva för vald månad)
+  const membershipServices = customers.flatMap((customer) => {
     if (!customer.serviceHistory || customer.serviceHistory.length === 0) return [];
     
     return customer.serviceHistory
-      .filter((service) => service.status === 'Aktiv' && isMembershipService(service.service))
+      .filter((service) => {
+        if (!isMembershipService(service.service)) return false;
+        
+        // Kolla om tjänsten var aktiv under vald månad
+        const serviceStart = new Date(service.date);
+        const serviceEnd = service.endDate ? new Date(service.endDate) : (service.status === 'Aktiv' ? today : new Date(service.date));
+        
+        // Tjänsten ska överlappa med vald månad
+        return serviceStart <= monthEnd && serviceEnd >= monthStart;
+      })
       .map((service) => ({
         ...service,
         customer,
@@ -61,7 +116,7 @@ export default function InvoicingPage() {
   });
 
   // Filtrera baserat på betalningsmetod, status och plats
-  const filteredServices = activeMembershipServices.filter((item) => {
+  const filteredServices = membershipServices.filter((item) => {
     const matchesPayment = selectedPaymentMethod === 'Alla' || item.paymentMethod === selectedPaymentMethod;
     const matchesStatus = selectedStatus === 'Alla' || item.invoiceStatus === selectedStatus;
     const matchesPlace = selectedPlace === 'Alla' || item.customer.place === selectedPlace;
@@ -101,8 +156,82 @@ export default function InvoicingPage() {
   const totalOverdue = overdue.reduce((sum, s) => sum + s.price, 0);
   const totalAutogiro = autogiro.reduce((sum, s) => sum + s.price, 0);
 
+  useEffect(() => {
+    setSelectedInvoices((prev) => {
+      if (prev.size === 0) {
+        return prev;
+      }
+
+      const validKeys = new Set(
+        filteredServices.map((item) => getInvoiceRowKey(item.customer.id, item.id))
+      );
+
+      let hasChanged = false;
+      const next = new Set<string>();
+
+      prev.forEach((key) => {
+        if (validKeys.has(key)) {
+          next.add(key);
+        } else {
+          hasChanged = true;
+        }
+      });
+
+      return hasChanged ? next : prev;
+    });
+  }, [filteredServices]);
+
+  const allSelected =
+    filteredServices.length > 0 && selectedInvoices.size === filteredServices.length;
+
+  const handleToggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedInvoices(new Set());
+      return;
+    }
+
+    setSelectedInvoices(
+      new Set(filteredServices.map((item) => getInvoiceRowKey(item.customer.id, item.id)))
+    );
+  };
+
+  const handleInvoiceSelectionChange = (key: string, checked: boolean) => {
+    setSelectedInvoices((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkStatusUpdate = async (status: InvoiceStatus) => {
+    const targets = filteredServices.filter((item) =>
+      selectedInvoices.has(getInvoiceRowKey(item.customer.id, item.id))
+    );
+
+    if (targets.length === 0) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    try {
+      await Promise.all(
+        targets.map((item) => handleSetStatus(item.customer.id, item.id, status))
+      );
+      setSelectedInvoices(new Set());
+    } catch (error) {
+      console.error('Fel vid bulkuppdatering av fakturastatus:', error);
+      alert('Kunde inte uppdatera alla fakturor. Försök igen.');
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
   // Generisk funktion för att sätta faktureringsstatus
-  const handleSetStatus = (customerId: string, serviceId: string, newStatus: InvoiceStatus) => {
+  const handleSetStatus = async (customerId: string, serviceId: string, newStatus: InvoiceStatus) => {
     const customer = customers.find((c) => c.id === customerId);
     
     // Logga faktureringsuppdatering
@@ -142,11 +271,13 @@ export default function InvoicingPage() {
         return service;
       });
       
-      updateCustomer(customerId, {
-        serviceHistory: updatedHistory,
-      }).catch((error) => {
+      try {
+        await updateCustomer(customerId, {
+          serviceHistory: updatedHistory,
+        });
+      } catch (error) {
         console.error('Fel vid uppdatering av kund:', error);
-      });
+      }
     }
   };
 
@@ -239,6 +370,48 @@ export default function InvoicingPage() {
         subtitle="Hantera fakturor och betalningar för aktiva medlemmar"
       />
 
+      {/* Månadsnavigering */}
+      <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-100 mb-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handlePreviousMonth}
+              className="p-2 hover:bg-gray-100 rounded-lg transition"
+              title="Föregående månad"
+            >
+              <ChevronLeft className="w-5 h-5 text-gray-700" />
+            </button>
+            
+            <div className="flex items-center gap-3">
+              <input
+                type="month"
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 font-medium"
+              />
+              <button
+                onClick={handleCurrentMonth}
+                className="px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition font-medium"
+              >
+                Idag
+              </button>
+            </div>
+            
+            <button
+              onClick={handleNextMonth}
+              className="p-2 hover:bg-gray-100 rounded-lg transition"
+              title="Nästa månad"
+            >
+              <ChevronRight className="w-5 h-5 text-gray-700" />
+            </button>
+          </div>
+          
+          <div className="text-sm text-gray-600">
+            {format(new Date(year, month - 1, 1), 'MMMM yyyy', { locale: sv })}
+          </div>
+        </div>
+      </div>
+
       {/* Statistik Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
@@ -252,7 +425,9 @@ export default function InvoicingPage() {
 
         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-gray-600">Betalda denna månad</h3>
+            <h3 className="text-sm font-medium text-gray-600">
+              Betalda {format(new Date(year, month - 1, 1), 'MMMM yyyy', { locale: sv })}
+            </h3>
             <CheckCircle className="w-5 h-5 text-green-600" />
           </div>
           <p className="text-3xl font-bold text-gray-900">{paid.length}</p>
@@ -371,10 +546,68 @@ export default function InvoicingPage() {
 
       {/* Faktureringslista */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+        <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-gray-600">
+            Visar {filteredServices.length} {filteredServices.length === 1 ? 'tjänst' : 'tjänster'}
+          </p>
+          {filteredServices.length > 0 && (
+            <button
+              onClick={handleToggleSelectAll}
+              className="text-sm text-gray-700 font-medium flex items-center gap-2 hover:text-gray-900"
+            >
+              {allSelected ? (
+                <>
+                  <CheckCircle className="w-4 h-4 text-[#1E5A7D]" />
+                  Avmarkera alla
+                </>
+              ) : (
+                <>
+                  <Square className="w-4 h-4 text-[#1E5A7D]" />
+                  Markera alla
+                </>
+              )}
+            </button>
+          )}
+        </div>
+
+        {selectedInvoices.size > 0 && (
+          <div className="px-4 py-3 border-b border-blue-100 bg-blue-50 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-sm font-medium text-blue-900">
+                Valda tjänster: {selectedInvoices.size}
+              </p>
+              {isBulkUpdating && (
+                <span className="text-xs text-blue-800">Uppdaterar status...</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {INVOICE_STATUSES.map((status) => (
+                <button
+                  key={status}
+                  onClick={() => handleBulkStatusUpdate(status)}
+                  disabled={isBulkUpdating}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border border-transparent shadow-sm transition hover:opacity-90 disabled:opacity-50 ${getInvoiceStatusColor(status)}`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-12">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={handleToggleSelectAll}
+                    className="w-4 h-4 text-[#1E5A7D] border-gray-300 rounded focus:ring-[#1E5A7D] cursor-pointer"
+                    aria-label="Markera alla fakturor"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Kund
                 </th>
@@ -402,119 +635,117 @@ export default function InvoicingPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {filteredServices.map((item) => (
-                <tr key={`${item.customer.id}-${item.id}`} className="hover:bg-gray-50 transition">
-                  <td className="px-4 py-3">
-                    <Link href={`/kunder/${item.customer.id}`} className="text-[#1E5A7D] hover:underline font-medium">
-                      {item.customer.name}
-                    </Link>
-                    <p className="text-xs text-gray-500">{item.customer.email}</p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm text-gray-900">{item.service}</span>
-                    {item.billingInterval && item.billingInterval !== 'Månadsvis' && (
-                      <p className="text-xs text-gray-500">{item.billingInterval}</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm font-semibold text-gray-900">
-                      {item.price.toLocaleString('sv-SE')} kr
-                    </span>
-                    <span className="text-xs text-gray-500">/mån</span>
-                    {item.numberOfMonths && item.numberOfMonths > 1 && (
-                      <p className="text-xs text-blue-600">× {item.numberOfMonths} mån</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2 py-1 text-xs font-medium rounded ${getPaymentMethodColor(item.paymentMethod)}`}>
-                      {item.paymentMethod || 'Ej angiven'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`px-2 py-1 text-xs font-medium rounded ${getInvoiceStatusColor(item.invoiceStatus)}`}>
-                      {item.invoiceStatus || 'Ej aktuell'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {item.nextInvoiceDate ? (
-                      <span className="text-sm text-gray-900">
-                        {format(new Date(item.nextInvoiceDate), 'd MMM yyyy', { locale: sv })}
-                      </span>
-                    ) : (
-                      <span className="text-sm text-gray-400">-</span>
-                    )}
-                    {item.paidUntil && (
-                      <p className="text-xs text-emerald-600">
-                        Betald till: {format(new Date(item.paidUntil), 'd MMM yyyy', { locale: sv })}
-                      </p>
-                    )}
-                    {item.invoiceReference && (
-                      <p className="text-xs text-gray-500">Ref: {item.invoiceReference}</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="text-sm text-gray-700">{item.customer.place}</span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {/* Primär åtgärd - alltid synlig */}
-                      {item.invoiceStatus !== 'Betald' && (
-                        <button
-                          onClick={() => handleMarkAsPaid(item.customer.id, item.id)}
-                          className="text-xs px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 transition font-medium flex items-center gap-1"
-                          title="Markera som betald"
-                        >
-                          <CheckCircle className="w-3 h-3" />
-                          Betald
-                        </button>
+              {filteredServices.map((item) => {
+                const currentStatus = (item.invoiceStatus ?? 'Ej aktuell') as InvoiceStatus;
+                const rowKey = getInvoiceRowKey(item.customer.id, item.id);
+                const isSelected = selectedInvoices.has(rowKey);
+
+                return (
+                  <tr key={`${item.customer.id}-${item.id}`} className="hover:bg-gray-50 transition">
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Markera ${item.customer.name}`}
+                        checked={isSelected}
+                        onChange={(e) => handleInvoiceSelectionChange(rowKey, e.target.checked)}
+                        className="w-4 h-4 text-[#1E5A7D] border-gray-300 rounded focus:ring-[#1E5A7D] cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/kunder/${item.customer.id}`}
+                        className="text-[#1E5A7D] hover:underline font-medium"
+                      >
+                        {item.customer.name}
+                      </Link>
+                      <p className="text-xs text-gray-500">{item.customer.email}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-gray-900">{item.service}</span>
+                      {item.billingInterval && item.billingInterval !== 'Månadsvis' && (
+                        <p className="text-xs text-gray-500">{item.billingInterval}</p>
                       )}
-                      
-                      {/* Dropdown för statusmarkeringar - ALLA STATUSAR */}
-                      <div className="relative group">
-                        <button className="text-xs px-3 py-1.5 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition font-medium">
-                          Markera status ▾
-                        </button>
-                        <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 max-h-96 overflow-y-auto">
-                          <div className="py-1">
-                            {INVOICE_STATUSES.map((status) => {
-                              // Hoppa över nuvarande status
-                              if (status === item.invoiceStatus) return null;
-                              
-                              return (
-                                <button
-                                  key={status}
-                                  onClick={() => handleSetStatus(item.customer.id, item.id, status)}
-                                  className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-50 flex items-center gap-2 ${
-                                    status === 'Ej aktuell' ? 'text-red-600 font-medium' : 'text-gray-700'
-                                  }`}
-                                >
-                                  <span className={`px-2 py-0.5 text-xs rounded ${getInvoiceStatusColor(status)}`}>
-                                    {status}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                            
-                            {/* Avskriv skuld - separerad */}
-                            {item.invoiceStatus !== 'Ej aktuell' && (
-                              <>
-                                <div className="border-t border-gray-200 my-1"></div>
-                                <button
-                                  onClick={() => handleWriteOff(item.customer.id, item.id)}
-                                  className="w-full text-left px-4 py-2 text-xs text-red-600 hover:bg-red-50 flex items-center gap-2 font-medium"
-                                >
-                                  <XCircle className="w-3 h-3" />
-                                  Avskriv skuld
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm font-semibold text-gray-900">
+                        {item.price.toLocaleString('sv-SE')} kr
+                      </span>
+                      <span className="text-xs text-gray-500">/mån</span>
+                      {item.numberOfMonths && item.numberOfMonths > 1 && (
+                        <p className="text-xs text-blue-600">× {item.numberOfMonths} mån</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-1 text-xs font-medium rounded ${getPaymentMethodColor(
+                          item.paymentMethod
+                        )}`}
+                      >
+                        {item.paymentMethod || 'Ej angiven'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-1 text-xs font-medium rounded ${getInvoiceStatusColor(
+                          item.invoiceStatus
+                        )}`}
+                      >
+                        {item.invoiceStatus || 'Ej aktuell'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {item.nextInvoiceDate ? (
+                        <span className="text-sm text-gray-900">
+                          {format(new Date(item.nextInvoiceDate), 'd MMM yyyy', { locale: sv })}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-400">-</span>
+                      )}
+                      {item.paidUntil && (
+                        <p className="text-xs text-emerald-600">
+                          Betald till: {format(new Date(item.paidUntil), 'd MMM yyyy', { locale: sv })}
+                        </p>
+                      )}
+                      {item.invoiceReference && (
+                        <p className="text-xs text-gray-500">Ref: {item.invoiceReference}</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-sm text-gray-700">{item.customer.place}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex flex-col items-stretch justify-end gap-2 sm:flex-row sm:items-center">
+                        {item.invoiceStatus !== 'Betald' && (
+                          <button
+                            onClick={() => handleMarkAsPaid(item.customer.id, item.id)}
+                            className="text-xs px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 transition font-medium flex items-center gap-1"
+                            title="Markera som betald"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            Betald
+                          </button>
+                        )}
+
+                        <InvoiceStatusSelect
+                          value={currentStatus}
+                          options={INVOICE_STATUSES}
+                          onChange={(status) => handleSetStatus(item.customer.id, item.id, status)}
+                        />
+
+                        {item.invoiceStatus !== 'Ej aktuell' && (
+                          <button
+                            onClick={() => handleWriteOff(item.customer.id, item.id)}
+                            className="text-xs px-3 py-1.5 bg-red-50 text-red-700 rounded hover:bg-red-100 transition font-medium flex items-center gap-1"
+                          >
+                            <XCircle className="w-3 h-3" />
+                            Avskriv skuld
+                          </button>
+                        )}
                       </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 

@@ -219,6 +219,7 @@ export default function NewCustomerPage() {
     if (validateForm()) {
       try {
         // Spara kunden till Firebase med serviceHistory inkl betalningsinfo
+        // För aktiva tjänster ska endDate inte sättas (tjänsten är pågående)
         const serviceEntry = {
           id: `service_${Date.now()}`,
           service: formData.service,
@@ -228,7 +229,11 @@ export default function NewCustomerPage() {
           priceNote: priceData.priceNote || undefined,
           date: new Date(formData.date),
           status: formData.status,
+          // endDate sätts bara för inaktiva/pausade/genomförda tjänster
+          endDate: formData.status !== 'Aktiv' ? new Date(formData.date) : undefined,
           sport: formData.sport,
+          coach: formData.coach,
+          coachHistory: formData.coach ? [{ coach: formData.coach, date: new Date(formData.date) }] : undefined,
           // Betalningsinformation per tjänst
           paymentMethod: paymentData.paymentMethod as any,
           invoiceStatus: paymentData.invoiceStatus as any,

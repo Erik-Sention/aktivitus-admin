@@ -131,6 +131,11 @@ export interface HistoryEntry {
   changedBy?: string;
 }
 
+export interface CoachChange {
+  coach: string;
+  date: Date; // När bytet skedde
+}
+
 export interface ServiceEntry {
   id: string;
   service: ServiceType;
@@ -140,9 +145,10 @@ export interface ServiceEntry {
   priceNote?: string;
   date: Date;
   status: Status;
-  endDate?: Date; // Slutdatum för memberships som avslutats
+  endDate?: Date; // Slutdatum - obligatoriskt för inaktiva/pausade/genomförda tjänster, valfritt för aktiva
   sport?: Sport; // Gren för tjänsten (obligatorisk för memberships)
-  coach?: string; // Coach för denna specifika tjänst
+  coach?: string; // Nuvarande coach för denna tjänst
+  coachHistory?: CoachChange[]; // Historik över coach-byten med datum
   // Betalningsinformation per tjänst
   paymentMethod?: PaymentMethod;
   invoiceStatus?: InvoiceStatus;

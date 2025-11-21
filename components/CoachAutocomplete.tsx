@@ -43,16 +43,19 @@ export default function CoachAutocomplete({
 
   useEffect(() => {
     if (value.length === 0) {
+      // När fältet är tomt, visa inga förslag (för att undvika dubbelvisning)
       setFilteredCoaches([]);
       setIsOpen(false);
       return;
     }
 
+    // Filtrera coacher som matchar, men exkludera det exakta värdet för att undvika dubbelvisning
     const filtered = coaches.filter((coach) =>
-      coach.toLowerCase().includes(value.toLowerCase())
+      coach.toLowerCase().includes(value.toLowerCase()) && coach.toLowerCase() !== value.toLowerCase()
     );
 
     setFilteredCoaches(filtered);
+    // Öppna bara om det finns matchningar och användaren faktiskt skriver något
     setIsOpen(filtered.length > 0 && value.length > 0);
   }, [value, coaches]);
 
@@ -101,12 +104,19 @@ export default function CoachAutocomplete({
         value={value}
         onChange={handleInputChange}
         onFocus={() => {
-          if (value.length > 0 && filteredCoaches.length > 0) {
-            setIsOpen(true);
+          // Öppna dropdown bara om användaren har börjat skriva något OCH det finns matchningar
+          if (value.length > 0) {
+            const filtered = coaches.filter((coach) =>
+              coach.toLowerCase().includes(value.toLowerCase())
+            );
+            if (filtered.length > 0) {
+              setFilteredCoaches(filtered);
+              setIsOpen(true);
+            }
           }
         }}
         onKeyDown={handleKeyDown}
-        className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+        className={`w-full px-4 py-2 bg-white border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
           error ? 'border-red-500' : 'border-gray-300'
         } ${className}`}
         placeholder={placeholder}

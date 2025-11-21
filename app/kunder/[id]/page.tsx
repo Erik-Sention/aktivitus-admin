@@ -25,6 +25,10 @@ export default function EditCustomerPage() {
   const [serviceHistory, setServiceHistory] = useState<ServiceEntry[]>([]);
   const [showAddService, setShowAddService] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [originalCustomer, setOriginalCustomer] = useState<Customer | null>(null);
+  const [originalServiceHistory, setOriginalServiceHistory] = useState<ServiceEntry[]>([]);
+  const [justSaved, setJustSaved] = useState(false);
 
   const defaultPrice = calculatePrice('Membership Standard', 'Löpning', false);
   
@@ -103,7 +107,11 @@ export default function EditCustomerPage() {
       // Ladda serviceHistory om det finns, annars skapa initial från nuvarande tjänst
       let history: ServiceEntry[];
       if (foundCustomer.serviceHistory && foundCustomer.serviceHistory.length > 0) {
-        history = foundCustomer.serviceHistory;
+        history = foundCustomer.serviceHistory.map(entry => ({
+          ...entry,
+          // Behåll endDate som det är - sätt INTE automatiskt för aktiva tjänster
+          endDate: entry.endDate ? new Date(entry.endDate) : undefined,
+        }));
       } else {
         history = [
           {
@@ -114,28 +122,69 @@ export default function EditCustomerPage() {
             date: foundCustomer.date,
             status: foundCustomer.status,
             sport: foundCustomer.sport,
+            endDate: foundCustomer.status === 'Aktiv' ? undefined : foundCustomer.date,
+            coach: foundCustomer.coach,
+            coachHistory: foundCustomer.coach ? [{ coach: foundCustomer.coach, date: foundCustomer.date }] : undefined,
           },
         ];
       }
       setServiceHistory(history);
+      setOriginalServiceHistory(JSON.parse(JSON.stringify(history))); // Deep copy
       
       // Uppdatera kunden med den senaste AKTIVA tjänsten
       const activeService = history.find(s => s.status === 'Aktiv') || history[0];
-      setCustomer({
+      const updatedCustomer = {
         ...foundCustomer,
         service: activeService.service,
         price: activeService.price,
         date: activeService.date,
         status: activeService.status,
-      });
+      };
+      setCustomer(updatedCustomer);
+      setOriginalCustomer(JSON.parse(JSON.stringify(updatedCustomer))); // Deep copy
+      setHasUnsavedChanges(false);
     }
   }, [params.id, customers]);
 
   const handleUpdateCustomer = (field: string, value: any) => {
     if (customer) {
       setCustomer({ ...customer, [field]: value });
+      setHasUnsavedChanges(true);
     }
   };
+
+
+  // Uppdatera hasUnsavedChanges när serviceHistory eller customer ändras
+  // Men ignorera om vi precis har sparat (originalCustomer/originalServiceHistory är null eller tom)
+  useEffect(() => {
+    // Om vi precis har sparat, ignorera ändringar från Firebase listener
+    if (justSaved) {
+      return;
+    }
+    
+    // Om originalCustomer eller originalServiceHistory inte är satta ännu, ignorera
+    if (!originalCustomer || originalServiceHistory.length === 0) {
+      return;
+    }
+    
+    // Om vi är i redigeringsläge, låt den andra useEffect hantera hasUnsavedChanges
+    if (editingService !== null) {
+      return;
+    }
+    
+    const serviceHistoryChanged = JSON.stringify(serviceHistory) !== JSON.stringify(originalServiceHistory);
+    const customerChanged = JSON.stringify(customer) !== JSON.stringify(originalCustomer);
+    const hasChanges = serviceHistoryChanged || customerChanged;
+    setHasUnsavedChanges(hasChanges);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceHistory, customer, originalServiceHistory, originalCustomer, justSaved]);
+
+  // Sätt hasUnsavedChanges när man redigerar en tjänst
+  useEffect(() => {
+    if (editingService && editedServiceData) {
+      setHasUnsavedChanges(true);
+    }
+  }, [editingService, editedServiceData]);
 
   const handleServiceChange = (selectedService: string) => {
     // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
@@ -227,6 +276,24 @@ export default function EditCustomerPage() {
       return;
     }
 
+    // Coach är obligatorisk - använd den valda coachen eller kundens huvudcoach
+    const coachName = newService.coach || customer?.coach || '';
+    if (!coachName) {
+      alert('Coach måste anges för alla tjänster');
+      return;
+    }
+
+    // Slutdatum är obligatoriskt för inaktiva/pausade/genomförda tjänster
+    // För "Genomförd" sätts slutdatum automatiskt till startdatum
+    let endDate = newService.endDate;
+    if (newService.status === 'Genomförd') {
+      endDate = newService.date; // Samma som startdatum
+    } else if (newService.status !== 'Aktiv' && !endDate) {
+      alert('Slutdatum måste anges för inaktiva, pausade eller genomförda tjänster');
+      return;
+    }
+    // För aktiva tjänster ska slutdatum INTE fyllas i automatiskt
+
     const serviceEntry: ServiceEntry = {
       id: `service_${Date.now()}`,
       service: newService.service as any,
@@ -236,9 +303,10 @@ export default function EditCustomerPage() {
       priceNote: newService.priceNote || undefined,
       date: new Date(newService.date),
       status: newService.status as any,
-      endDate: newService.endDate ? new Date(newService.endDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
       sport: newService.sport as any,
-      coach: newService.coach || customer?.coach || undefined,
+      coach: coachName, // Coach är alltid satt här
+      coachHistory: [{ coach: coachName, date: new Date(newService.date) }], // Starta coach-historik
       // Betalningsinformation per tjänst
       paymentMethod: newService.paymentMethod as any,
       invoiceStatus: newService.invoiceStatus as any,
@@ -252,6 +320,7 @@ export default function EditCustomerPage() {
 
     const updatedHistory = [serviceEntry, ...serviceHistory];
     setServiceHistory(updatedHistory);
+    setHasUnsavedChanges(true);
     
     // Uppdatera kundens huvudtjänst till den senaste AKTIVA tjänsten
     // Om det är ett nytt membership, uppdatera också huvudcoachen
@@ -311,7 +380,7 @@ export default function EditCustomerPage() {
       date: new Date().toISOString().split('T')[0],
       status: 'Aktiv',
       usePercentage: true,
-      endDate: '',
+      endDate: '', // Lämna tomt för aktiva tjänster
       coach: customer?.coach || '',
       // Reset betalningsinformation
       paymentMethod: 'Faktura',
@@ -328,16 +397,31 @@ export default function EditCustomerPage() {
 
   const handleEditService = (entry: ServiceEntry) => {
     setEditingService(entry.id);
+    
+    // Beräkna originalPrice korrekt - om det saknas och det finns en rabatt, beräkna tillbaka
+    let originalPrice = entry.originalPrice;
+    if (!originalPrice && entry.discount && entry.discount !== 0) {
+      // Om originalPrice saknas men det finns en rabatt, beräkna tillbaka från price och discount
+      // price = originalPrice - (originalPrice * discount / 100)
+      // price = originalPrice * (1 - discount / 100)
+      // originalPrice = price / (1 - discount / 100)
+      originalPrice = entry.price / (1 - entry.discount / 100);
+    } else if (!originalPrice) {
+      // Om det inte finns någon rabatt, använd price som originalPrice
+      originalPrice = entry.price;
+    }
+    
     setEditedServiceData({
       ...entry,
       date: format(new Date(entry.date), 'yyyy-MM-dd'),
       endDate: entry.endDate ? format(new Date(entry.endDate), 'yyyy-MM-dd') : '',
       nextInvoiceDate: entry.nextInvoiceDate ? format(new Date(entry.nextInvoiceDate), 'yyyy-MM-dd') : '',
       paidUntil: entry.paidUntil ? format(new Date(entry.paidUntil), 'yyyy-MM-dd') : '',
-      originalPrice: entry.originalPrice || entry.price,
+      originalPrice: originalPrice,
       discount: entry.discount || 0,
       priceNote: entry.priceNote || '',
       sport: entry.sport || '',
+      coach: entry.coach || '',
       paymentMethod: entry.paymentMethod || 'Faktura',
       invoiceStatus: entry.invoiceStatus || 'Ej aktuell',
       billingInterval: entry.billingInterval || 'Månadsvis',
@@ -348,6 +432,57 @@ export default function EditCustomerPage() {
   };
 
   const handleSaveEdit = (id: string) => {
+    // Coach är obligatorisk
+    const newCoach = editedServiceData.coach || customer?.coach || '';
+    if (!newCoach) {
+      alert('Coach måste anges för alla tjänster');
+      return;
+    }
+
+    // Slutdatum är obligatoriskt för inaktiva/pausade/genomförda tjänster
+    // För "Genomförd" sätts slutdatum automatiskt till startdatum
+    let endDate = editedServiceData.endDate;
+    if (editedServiceData.status === 'Genomförd') {
+      endDate = editedServiceData.date; // Samma som startdatum
+    } else if (editedServiceData.status !== 'Aktiv' && !endDate) {
+      alert('Slutdatum måste anges för inaktiva, pausade eller genomförda tjänster');
+      return;
+    }
+    // För aktiva tjänster behöver vi INTE sätta slutdatum - det ska vara undefined
+    // endDate är redan undefined om det inte är satt, vilket är korrekt för aktiva tjänster
+
+    const entry = serviceHistory.find(e => e.id === id);
+    const oldCoach = entry?.coach || '';
+    
+    // Om coachen har ändrats under ett membership, spåra bytet med datum
+    let coachHistory = entry?.coachHistory || [];
+    
+    if (oldCoach && newCoach && oldCoach !== newCoach) {
+      // Coach har ändrats - lägg till ny coach med datum för när bytet skedde
+      // Om det är ett membership, behåller vi den gamla coachen med sitt slutdatum
+      // och lägger till den nya coachen med startdatum
+      
+      // Hitta den senaste coachen i historiken
+      const lastCoachEntry = coachHistory.length > 0 
+        ? coachHistory[coachHistory.length - 1]
+        : { coach: oldCoach, date: entry.date };
+      
+      // Lägg till den nya coachen med datum för när bytet skedde
+      // Använd redigeringsdatumet eller idag om det är aktivt
+      const changeDate = editedServiceData.date ? new Date(editedServiceData.date) : new Date();
+      
+      coachHistory = [
+        ...coachHistory,
+        { coach: newCoach, date: changeDate }
+      ];
+    } else if (!oldCoach && newCoach) {
+      // Om det inte fanns någon coach tidigare, skapa första entry
+      coachHistory = [{ coach: newCoach, date: new Date(editedServiceData.date) }];
+    } else if (oldCoach === newCoach && coachHistory.length === 0) {
+      // Om coachen är samma men ingen historik finns, skapa första entry
+      coachHistory = [{ coach: newCoach, date: new Date(editedServiceData.date) }];
+    }
+
     const updatedHistory = serviceHistory.map((entry) =>
       entry.id === id
         ? {
@@ -359,8 +494,10 @@ export default function EditCustomerPage() {
             priceNote: editedServiceData.priceNote || undefined,
             status: editedServiceData.status,
             date: new Date(editedServiceData.date),
-            endDate: editedServiceData.endDate ? new Date(editedServiceData.endDate) : undefined,
+            endDate: endDate ? new Date(endDate) : undefined,
             sport: editedServiceData.sport,
+            coach: newCoach, // Coach är alltid satt här
+            coachHistory: coachHistory.length > 0 ? coachHistory : [{ coach: newCoach, date: new Date(editedServiceData.date) }],
             paymentMethod: editedServiceData.paymentMethod,
             invoiceStatus: editedServiceData.invoiceStatus,
             billingInterval: editedServiceData.billingInterval,
@@ -373,6 +510,7 @@ export default function EditCustomerPage() {
         : entry
     );
     setServiceHistory(updatedHistory);
+    setHasUnsavedChanges(true);
     
     // Uppdatera kundens huvudtjänst till den senaste AKTIVA tjänsten
     if (customer) {
@@ -393,12 +531,19 @@ export default function EditCustomerPage() {
   const handleCancelEdit = () => {
     setEditingService(null);
     setEditedServiceData(null);
+    // Återställ hasUnsavedChanges om det inte finns andra ändringar
+    if (originalServiceHistory.length > 0 && originalCustomer) {
+      const serviceHistoryChanged = JSON.stringify(serviceHistory) !== JSON.stringify(originalServiceHistory);
+      const customerChanged = JSON.stringify(customer) !== JSON.stringify(originalCustomer);
+      setHasUnsavedChanges(serviceHistoryChanged || customerChanged);
+    }
   };
 
   const handleDeleteService = (id: string) => {
     if (confirm('Är du säker på att du vill ta bort denna tjänst?')) {
       const updatedHistory = serviceHistory.filter((s) => s.id !== id);
       setServiceHistory(updatedHistory);
+      setHasUnsavedChanges(true);
       
       // Om det finns kvar tjänster, uppdatera kunden med den senaste AKTIVA tjänsten
       if (updatedHistory.length > 0 && customer) {
@@ -416,22 +561,145 @@ export default function EditCustomerPage() {
   };
 
   const handleSave = async () => {
-    if (customer) {
-      try {
-        await updateCustomer(customer.id, { ...customer, serviceHistory: serviceHistory });
-        setShowSuccess(true);
-        setTimeout(() => {
-          setShowSuccess(false);
-          router.push('/kunder');
-        }, 1500);
-      } catch (error) {
-        console.error('Fel vid sparande av kund:', error);
-        alert('Kunde inte spara ändringar. Kontrollera Firebase-konfigurationen.');
+    if (!customer) return;
+
+    // Om det finns en aktiv redigering, spara den först och få den uppdaterade historiken
+    let finalServiceHistory = serviceHistory;
+    
+    if (editingService && editedServiceData) {
+      // Validera redigeringsdata
+      const newCoach = editedServiceData.coach || customer?.coach || '';
+      if (!newCoach) {
+        alert('Coach måste anges för alla tjänster');
+        return;
       }
+      // Slutdatum krävs bara för inaktiva/pausade/genomförda tjänster
+      if (editedServiceData.status !== 'Aktiv' && !editedServiceData.endDate) {
+        alert('Slutdatum måste anges för inaktiva, pausade eller genomförda tjänster');
+        return;
+      }
+      
+      // Beräkna den uppdaterade historiken direkt här istället för att vänta på state
+      const entry = serviceHistory.find(e => e.id === editingService);
+      const oldCoach = entry?.coach || '';
+      
+      let coachHistory = entry?.coachHistory || [];
+      
+      if (oldCoach && newCoach && oldCoach !== newCoach) {
+        const changeDate = editedServiceData.date ? new Date(editedServiceData.date) : new Date();
+        coachHistory = [
+          ...coachHistory,
+          { coach: newCoach, date: changeDate }
+        ];
+      } else if (!oldCoach && newCoach) {
+        coachHistory = [{ coach: newCoach, date: new Date(editedServiceData.date) }];
+      } else if (oldCoach === newCoach && coachHistory.length === 0) {
+        coachHistory = [{ coach: newCoach, date: new Date(editedServiceData.date) }];
+      }
+
+      let endDate = editedServiceData.endDate;
+      if (editedServiceData.status === 'Genomförd') {
+        endDate = editedServiceData.date;
+      }
+
+      // Säkerställ att originalPrice är satt - om det inte finns, använd price
+      const finalOriginalPrice = editedServiceData.originalPrice || editedServiceData.price;
+      const finalPrice = editedServiceData.price;
+      const finalDiscount = editedServiceData.discount || 0;
+      
+      // Uppdatera historiken direkt
+      finalServiceHistory = serviceHistory.map((entry) =>
+        entry.id === editingService
+          ? {
+              ...entry,
+              service: editedServiceData.service,
+              price: finalPrice,
+              originalPrice: finalOriginalPrice,
+              // Spara discount även om det är 0 eller negativt (t.ex. -5 för prisökning)
+              discount: finalDiscount !== 0 ? finalDiscount : undefined,
+              priceNote: editedServiceData.priceNote || undefined,
+              status: editedServiceData.status,
+              date: new Date(editedServiceData.date),
+              endDate: endDate ? new Date(endDate) : undefined,
+              sport: editedServiceData.sport,
+              coach: newCoach,
+              coachHistory: coachHistory.length > 0 ? coachHistory : [{ coach: newCoach, date: new Date(editedServiceData.date) }],
+              paymentMethod: editedServiceData.paymentMethod,
+              invoiceStatus: editedServiceData.invoiceStatus,
+              billingInterval: editedServiceData.billingInterval,
+              numberOfMonths: editedServiceData.numberOfMonths || undefined,
+              nextInvoiceDate: editedServiceData.nextInvoiceDate ? new Date(editedServiceData.nextInvoiceDate) : undefined,
+              paidUntil: editedServiceData.paidUntil ? new Date(editedServiceData.paidUntil) : undefined,
+              invoiceReference: editedServiceData.invoiceReference || undefined,
+              invoiceNote: editedServiceData.invoiceNote || undefined,
+            }
+          : entry
+      );
+      
+      // Uppdatera även kundens huvudtjänst
+      const activeService = finalServiceHistory.find(s => s.status === 'Aktiv') || finalServiceHistory[0];
+      setCustomer({
+        ...customer,
+        service: activeService.service as any,
+        price: activeService.price,
+        date: activeService.date,
+        status: activeService.status as any,
+      });
+    }
+
+    // Validera att alla tjänster har coach och slutdatum (om de inte är aktiva)
+    const invalidServices = finalServiceHistory.filter(entry => {
+      if (!entry.coach) return true;
+      // Slutdatum krävs bara för inaktiva/pausade/genomförda tjänster
+      if (entry.status !== 'Aktiv' && !entry.endDate) return true;
+      return false;
+    });
+
+    if (invalidServices.length > 0) {
+      alert('Alla tjänster måste ha coach. Inaktiva, pausade eller genomförda tjänster måste också ha slutdatum. Kontrollera tjänstehistoriken.');
+      return;
+    }
+
+    try {
+      // Uppdatera state först
+      setServiceHistory(finalServiceHistory);
+      const finalCustomer = customer;
+      
+      // Uppdatera originalCustomer och originalServiceHistory INNAN Firebase-uppdateringen
+      // Detta säkerställer att hasUnsavedChanges inte sätts tillbaka till true när Firebase listener triggas
+      const savedCustomer = JSON.parse(JSON.stringify(finalCustomer));
+      const savedServiceHistory = JSON.parse(JSON.stringify(finalServiceHistory));
+      
+      setOriginalCustomer(savedCustomer);
+      setOriginalServiceHistory(savedServiceHistory);
+      setHasUnsavedChanges(false); // Sätt till false INNAN Firebase-uppdateringen
+      setJustSaved(true); // Sätt flagga för att ignorera Firebase listener-uppdateringar
+      
+      await updateCustomer(finalCustomer.id, { ...finalCustomer, serviceHistory: finalServiceHistory });
+      
+      setShowSuccess(true);
+      setEditingService(null);
+      setEditedServiceData(null);
+      
+      // Efter en kort delay, tillåt hasUnsavedChanges att uppdateras igen
+      setTimeout(() => {
+        setShowSuccess(false);
+        setJustSaved(false);
+        // Användaren stannar på sidan efter sparande - ingen automatisk redirect
+      }, 2000);
+    } catch (error) {
+      console.error('Fel vid sparande av kund:', error);
+      alert('Kunde inte spara ändringar. Kontrollera Firebase-konfigurationen.');
     }
   };
 
   const handleCancel = () => {
+    if (hasUnsavedChanges) {
+      if (false) {
+        return;
+      }
+    }
+    setHasUnsavedChanges(false);
     router.push('/kunder');
   };
 
@@ -504,7 +772,7 @@ export default function EditCustomerPage() {
                   type="text"
                   value={customer.name}
                   onChange={(e) => handleUpdateCustomer('name', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 />
               </div>
 
@@ -514,7 +782,7 @@ export default function EditCustomerPage() {
                   type="email"
                   value={customer.email}
                   onChange={(e) => handleUpdateCustomer('email', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 />
               </div>
 
@@ -524,7 +792,7 @@ export default function EditCustomerPage() {
                   type="tel"
                   value={customer.phone || ''}
                   onChange={(e) => handleUpdateCustomer('phone', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                   placeholder="070-123 45 67"
                 />
               </div>
@@ -534,7 +802,7 @@ export default function EditCustomerPage() {
                 <select
                   value={customer.place}
                   onChange={(e) => handleUpdateCustomer('place', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 >
                   {PLACES.map((place) => (
                     <option key={place} value={place}>
@@ -568,7 +836,7 @@ export default function EditCustomerPage() {
                 <select
                   value={customer.sport}
                   onChange={(e) => handleUpdateCustomer('sport', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 >
                   {SPORTS.map((sport) => (
                     <option key={sport} value={sport}>
@@ -590,7 +858,7 @@ export default function EditCustomerPage() {
                 <select
                   value={customer.status}
                   onChange={(e) => handleUpdateCustomer('status', e.target.value)}
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 >
                   {STATUSES.map((status) => (
                     <option key={status} value={status}>
@@ -617,15 +885,15 @@ export default function EditCustomerPage() {
             </div>
 
             {showAddService && (
-              <div className="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <h4 className="font-medium text-gray-900 mb-3">Ny tjänst</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="md:col-span-2">
+              <div className="mb-4 p-6 bg-white rounded-lg border border-gray-200">
+                <h4 className="text-lg font-semibold text-gray-900 mb-4">Ny tjänst</h4>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                  <div className="md:col-span-4">
                     <label className="block text-sm font-medium text-gray-900 mb-1">Tjänst</label>
                     <select
                       value={newService.service}
                       onChange={(e) => handleServiceChange(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     >
                       {services.length > 0 ? (
                         <>
@@ -680,14 +948,14 @@ export default function EditCustomerPage() {
                     </select>
                   </div>
 
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-gray-900 mb-1">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-2">
                       Gren {isMembershipService(newService.service) && <span className="text-red-500">*</span>}
                     </label>
                     <select
                       value={newService.sport}
                       onChange={(e) => handleSportChangeForNewService(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     >
                       {SPORTS.map((sport) => (
                         <option key={sport} value={sport}>
@@ -704,7 +972,7 @@ export default function EditCustomerPage() {
                     )}
                   </div>
 
-                  <div className="md:col-span-2 bg-gray-50 p-3 rounded border border-gray-200">
+                  <div className="md:col-span-4 bg-gray-50 p-3 rounded-lg border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-gray-700">Föreslagt pris:</span>
                       <span className="text-sm font-semibold text-gray-900">
@@ -736,50 +1004,50 @@ export default function EditCustomerPage() {
                       </label>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-3">
                       {newService.usePercentage ? (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Rabatt (%)</label>
+                            <label className="block text-sm font-medium text-gray-900 mb-2">Rabatt (%)</label>
                             <input
                               type="number"
                               value={newService.discount}
                               onChange={(e) => handleDiscountChange(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                               placeholder="0"
                               min="0"
                               max="100"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Slutpris (kr)</label>
+                            <label className="block text-sm font-medium text-gray-900 mb-2">Slutpris (kr)</label>
                             <input
                               type="number"
                               value={newService.price}
                               disabled
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-gray-100 text-gray-900 font-semibold"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-900 font-semibold"
                             />
                           </div>
                         </>
                       ) : (
                         <>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Slutpris (kr)</label>
+                            <label className="block text-sm font-medium text-gray-900 mb-2">Slutpris (kr)</label>
                             <input
                               type="number"
                               value={newService.price}
                               onChange={(e) => handleManualPriceChange(parseFloat(e.target.value) || 0)}
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900 font-semibold"
+                              className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 font-semibold"
                               placeholder="0"
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-600 mb-1">Skillnad</label>
+                            <label className="block text-sm font-medium text-gray-900 mb-2">Skillnad</label>
                             <input
                               type="text"
                               value={`${newService.originalPrice - newService.price} kr`}
                               disabled
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm bg-gray-100 text-gray-900"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-900"
                             />
                           </div>
                         </>
@@ -787,16 +1055,16 @@ export default function EditCustomerPage() {
                     </div>
                   </div>
 
-                  <div className="md:col-span-2">
+                  <div className="md:col-span-4">
                     <label className="block text-sm font-medium text-gray-900 mb-1">
-                      Anledning till prisavvikelse <span className="text-xs text-gray-500">(frivillig)</span>
+                      Anledning till prisavvikelse <span className="text-xs text-gray-500 font-normal">(frivillig)</span>
                     </label>
-                    <input
-                      type="text"
+                    <textarea
                       value={newService.priceNote}
                       onChange={(e) => setNewService({ ...newService, priceNote: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                       placeholder="T.ex. Presentkort, 15% kampanj, hålla kvar kunden..."
+                      rows={2}
                     />
                   </div>
 
@@ -813,26 +1081,31 @@ export default function EditCustomerPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-900 mb-1">Datum</label>
+                    <label className="block text-sm font-medium text-gray-900 mb-1">Startdatum <span className="text-red-500">*</span></label>
                     <input
                       type="date"
                       value={newService.date}
                       onChange={(e) => setNewService({ ...newService, date: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-900 mb-1">
-                      Status 
-                      {isTestService(newService.service) && (
-                        <span className="ml-2 text-xs text-gray-500">(Auto: Genomförd för tester)</span>
-                      )}
+                      Status <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={newService.status}
-                      onChange={(e) => setNewService({ ...newService, status: e.target.value })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      onChange={(e) => {
+                        const newStatus = e.target.value;
+                        let updatedEndDate = newService.endDate;
+                        // Om status ändras till "Genomförd", sätt slutdatum till startdatum
+                        if (newStatus === 'Genomförd') {
+                          updatedEndDate = newService.date;
+                        }
+                        setNewService({ ...newService, status: newStatus, endDate: updatedEndDate });
+                      }}
+                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     >
                       {STATUSES.map((status) => (
                         <option key={status} value={status}>
@@ -842,127 +1115,131 @@ export default function EditCustomerPage() {
                     </select>
                   </div>
                   
-                  {isMembershipService(newService.service) && newService.status !== 'Aktiv' && (
-                    <div className="md:col-span-2">
-                      <label className="block text-sm font-medium text-gray-900 mb-1">
-                        Slutdatum <span className="text-xs text-gray-500">(frivillig - för churn-analys)</span>
-                      </label>
-                      <input
-                        type="date"
-                        value={newService.endDate}
-                        onChange={(e) => setNewService({ ...newService, endDate: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-1">
+                      Slutdatum 
+                      {newService.status !== 'Aktiv' && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="date"
+                      value={newService.endDate}
+                      onChange={(e) => setNewService({ ...newService, endDate: e.target.value })}
+                      disabled={newService.status === 'Genomförd'}
+                      className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                        newService.status === 'Genomförd' ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
+                      }`}
+                      required={newService.status !== 'Aktiv'}
+                    />
+                    {newService.status === 'Aktiv' && (
+                      <p className="mt-0.5 text-xs text-gray-500">Frivilligt för aktiva tjänster.</p>
+                    )}
+                  </div>
 
                   {/* Betalningsinformation för denna tjänst */}
-                  <div className="md:col-span-2 mt-4 pt-4 border-t border-gray-300">
-                    <h5 className="font-medium text-gray-900 mb-3 text-sm">Betalningsinformation</h5>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-900 mb-1">Betalningsmetod</label>
-                        <select
-                          value={newService.paymentMethod}
-                          onChange={(e) => setNewService({ ...newService, paymentMethod: e.target.value as any })}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                        >
-                          {PAYMENT_METHODS.map((method) => (
-                            <option key={method} value={method}>{method}</option>
-                          ))}
-                        </select>
-                      </div>
+                  <div className="md:col-span-4 mt-3 pt-4 border-t border-gray-300">
+                    <h5 className="text-sm font-semibold text-gray-900 mb-3">Betalningsinformation</h5>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Betalningsmetod</label>
+                          <select
+                            value={newService.paymentMethod}
+                            onChange={(e) => setNewService({ ...newService, paymentMethod: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          >
+                            {PAYMENT_METHODS.map((method) => (
+                              <option key={method} value={method}>{method}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                      <div>
-                        <label className="block text-xs font-medium text-gray-900 mb-1">Faktureringsstatus</label>
-                        <select
-                          value={newService.invoiceStatus}
-                          onChange={(e) => setNewService({ ...newService, invoiceStatus: e.target.value as any })}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                        >
-                          {INVOICE_STATUSES.map((status) => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Faktureringsstatus</label>
+                          <select
+                            value={newService.invoiceStatus}
+                            onChange={(e) => setNewService({ ...newService, invoiceStatus: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          >
+                            {INVOICE_STATUSES.map((status) => (
+                              <option key={status} value={status}>{status}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                      {isMembershipService(newService.service) && (
-                        <>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Faktureringsintervall</label>
+                          <select
+                            value={newService.billingInterval}
+                            onChange={(e) => setNewService({ ...newService, billingInterval: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          >
+                            {BILLING_INTERVALS.filter(interval => interval !== 'Engångsbetalning').map((interval) => (
+                              <option key={interval} value={interval}>{interval}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {(newService.paymentMethod === 'Förskottsbetalning' || newService.billingInterval !== 'Månadsvis') && (
                           <div>
-                            <label className="block text-xs font-medium text-gray-900 mb-1">Faktureringsintervall</label>
-                            <select
-                              value={newService.billingInterval}
-                              onChange={(e) => setNewService({ ...newService, billingInterval: e.target.value as any })}
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                            >
-                              {BILLING_INTERVALS.filter(interval => interval !== 'Engångsbetalning').map((interval) => (
-                                <option key={interval} value={interval}>{interval}</option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {(newService.paymentMethod === 'Förskottsbetalning' || newService.billingInterval !== 'Månadsvis') && (
-                            <div>
-                              <label className="block text-xs font-medium text-gray-900 mb-1">Antal månader</label>
-                              <input
-                                type="number"
-                                value={newService.numberOfMonths}
-                                onChange={(e) => setNewService({ ...newService, numberOfMonths: parseInt(e.target.value) || 1 })}
-                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                                min="1"
-                                max="36"
-                              />
-                            </div>
-                          )}
-
-                          <div>
-                            <label className="block text-xs font-medium text-gray-900 mb-1">Nästa faktureringsdatum</label>
+                            <label className="block text-sm font-medium text-gray-900 mb-1">Antal månader</label>
                             <input
-                              type="date"
-                              value={newService.nextInvoiceDate}
-                              onChange={(e) => setNewService({ ...newService, nextInvoiceDate: e.target.value })}
-                              className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                              type="number"
+                              value={newService.numberOfMonths}
+                              onChange={(e) => setNewService({ ...newService, numberOfMonths: parseInt(e.target.value) || 1 })}
+                              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                              min="1"
+                              max="36"
                             />
                           </div>
+                        )}
 
-                          {newService.paymentMethod === 'Förskottsbetalning' && (
-                            <div>
-                              <label className="block text-xs font-medium text-gray-900 mb-1">Betald till</label>
-                              <input
-                                type="date"
-                                value={newService.paidUntil}
-                                onChange={(e) => setNewService({ ...newService, paidUntil: e.target.value })}
-                                className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                              />
-                            </div>
-                          )}
-                        </>
-                      )}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Nästa faktureringsdatum</label>
+                          <input
+                            type="date"
+                            value={newService.nextInvoiceDate}
+                            onChange={(e) => setNewService({ ...newService, nextInvoiceDate: e.target.value })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          />
+                        </div>
 
-                      <div>
-                        <label className="block text-xs font-medium text-gray-900 mb-1">Fakturareferens</label>
-                        <input
-                          type="text"
-                          value={newService.invoiceReference}
-                          onChange={(e) => setNewService({ ...newService, invoiceReference: e.target.value })}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                          placeholder="OCR-nummer"
-                        />
-                      </div>
+                        {newService.paymentMethod === 'Förskottsbetalning' && (
+                          <div>
+                            <label className="block text-sm font-medium text-gray-900 mb-1">Betald till</label>
+                            <input
+                              type="date"
+                              value={newService.paidUntil}
+                              onChange={(e) => setNewService({ ...newService, paidUntil: e.target.value })}
+                              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            />
+                          </div>
+                        )}
 
-                      <div>
-                        <label className="block text-xs font-medium text-gray-900 mb-1">Faktureringsnotering</label>
-                        <input
-                          type="text"
-                          value={newService.invoiceNote}
-                          onChange={(e) => setNewService({ ...newService, invoiceNote: e.target.value })}
-                          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                          placeholder="Särskilda instruktioner"
-                        />
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Fakturareferens</label>
+                          <input
+                            type="text"
+                            value={newService.invoiceReference}
+                            onChange={(e) => setNewService({ ...newService, invoiceReference: e.target.value })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            placeholder="OCR-nummer"
+                          />
+                        </div>
+
+                        <div className="md:col-span-3">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Faktureringsnotering <span className="text-xs text-gray-500 font-normal">(frivillig)</span>
+                          </label>
+                          <textarea
+                            value={newService.invoiceNote}
+                            onChange={(e) => setNewService({ ...newService, invoiceNote: e.target.value })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            placeholder="Särskilda instruktioner"
+                            rows={2}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
 
                 <div className="flex gap-2 mt-3">
                   <button
@@ -989,67 +1266,168 @@ export default function EditCustomerPage() {
                 >
                   {editingService === entry.id ? (
                     // Redigeringsläge - Fullständigt formulär
-                    <div className="space-y-4 bg-blue-50 p-4 rounded-lg">
-                      {/* Tjänsttyp */}
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Tjänst *
-                        </label>
-                        <select
-                          value={editedServiceData.service}
-                          onChange={(e) => {
-                            const selectedService = e.target.value as any;
-                            // Recalculate base price with current sport and senior coach status
-                            const basePrice = calculatePrice(
-                              selectedService, 
-                              editedServiceData.sport || 'Löpning', 
-                              customer?.isSeniorCoach || false
-                            );
-                            setEditedServiceData({
-                              ...editedServiceData,
-                              service: selectedService,
-                              originalPrice: basePrice,
-                              price: basePrice - (basePrice * (editedServiceData.discount || 0) / 100),
-                            });
-                          }}
-                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                        >
-                          {SERVICES.map((service) => (
-                            <option key={service} value={service}>
-                              {service}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Gren */}
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Gren {isMembershipService(editedServiceData.service) && '*'}
-                        </label>
-                        {isMembershipService(editedServiceData.service) ? (
+                    <div className="bg-white p-6 rounded-lg border border-gray-200">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        {/* Tjänsttyp */}
+                        <div className="md:col-span-4">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Tjänst <span className="text-red-500">*</span>
+                          </label>
                           <select
-                            value={editedServiceData.sport || ''}
-                            onChange={(e) => setEditedServiceData({ ...editedServiceData, sport: e.target.value as any })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                            value={editedServiceData.service}
+                            onChange={(e) => {
+                              const selectedService = e.target.value as any;
+                              // Recalculate base price with current sport and senior coach status
+                              const basePrice = calculatePrice(
+                                selectedService, 
+                                editedServiceData.sport || 'Löpning', 
+                                customer?.isSeniorCoach || false
+                              );
+                              setEditedServiceData({
+                                ...editedServiceData,
+                                service: selectedService,
+                                originalPrice: basePrice,
+                                price: basePrice - (basePrice * (editedServiceData.discount || 0) / 100),
+                                endDate: editedServiceData.endDate || '',
+                              });
+                            }}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                           >
-                            {SPORTS.map((sport) => (
-                              <option key={sport} value={sport}>
-                                {sport}
+                            {SERVICES.map((service) => (
+                              <option key={service} value={service}>
+                                {service}
                               </option>
                             ))}
                           </select>
-                        ) : (
-                          <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600 italic">
-                            {getTestType(editedServiceData.service as any, editedServiceData.sport || 'Löpning')}
-                          </div>
-                        )}
-                      </div>
+                        </div>
 
-                      {/* Pris */}
-                      <div className="grid grid-cols-2 gap-3">
+                        {/* Gren */}
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Gren {isMembershipService(editedServiceData.service) && <span className="text-red-500">*</span>}
+                          </label>
+                          {isMembershipService(editedServiceData.service) ? (
+                            <select
+                              value={editedServiceData.sport || ''}
+                              onChange={(e) => setEditedServiceData({ ...editedServiceData, sport: e.target.value as any })}
+                              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            >
+                              {SPORTS.map((sport) => (
+                                <option key={sport} value={sport}>
+                                  {sport}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-600 italic">
+                              {getTestType(editedServiceData.service as any, editedServiceData.sport || 'Löpning')}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Coach */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Coach <span className="text-red-500">*</span>
+                          </label>
+                          <CoachAutocomplete
+                            value={editedServiceData.coach || customer?.coach || ''}
+                            onChange={(value) => setEditedServiceData({ ...editedServiceData, coach: value })}
+                            placeholder="Ange coach-namn"
+                          />
+                          {entry.coachHistory && entry.coachHistory.length > 1 && (
+                            <div className="mt-1 p-1.5 bg-blue-50 rounded border border-blue-200">
+                              <p className="text-xs font-medium text-gray-700 mb-0.5">Coach-historik:</p>
+                              <div className="space-y-0.5">
+                                {entry.coachHistory.map((change, idx) => {
+                                  const nextChange = entry.coachHistory && idx < entry.coachHistory.length - 1 
+                                    ? entry.coachHistory[idx + 1]
+                                    : null;
+                                  const periodEnd = nextChange 
+                                    ? format(new Date(nextChange.date), 'd MMM yyyy', { locale: sv })
+                                    : (entry.endDate 
+                                      ? format(new Date(entry.endDate), 'd MMM yyyy', { locale: sv })
+                                      : 'pågående');
+                                  
+                                  return (
+                                    <div key={idx} className="text-xs text-gray-700">
+                                      <span className="font-medium">{change.coach}</span>
+                                      {' '}
+                                      <span className="text-gray-500">
+                                        ({format(new Date(change.date), 'd MMM yyyy', { locale: sv })} - {periodEnd})
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {editedServiceData.coach && editedServiceData.coach !== entry.coach && (
+                                <p className="text-xs text-blue-700 font-medium mt-1">
+                                  ⚠️ Coach kommer att ändras till: {editedServiceData.coach}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Startdatum */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Startdatum <span className="text-red-500">*</span></label>
+                          <input
+                            type="date"
+                            value={editedServiceData.date}
+                            onChange={(e) => setEditedServiceData({ ...editedServiceData, date: e.target.value })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          />
+                        </div>
+
+                        {/* Status */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">Status <span className="text-red-500">*</span></label>
+                          <select
+                            value={editedServiceData.status}
+                            onChange={(e) => {
+                              const newStatus = e.target.value as any;
+                              let updatedEndDate = editedServiceData.endDate;
+                              // Om status ändras till "Genomförd", sätt slutdatum till startdatum
+                              if (newStatus === 'Genomförd') {
+                                updatedEndDate = editedServiceData.date;
+                              }
+                              setEditedServiceData({ ...editedServiceData, status: newStatus, endDate: updatedEndDate });
+                            }}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                          >
+                            {STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Slutdatum */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Slutdatum 
+                            {editedServiceData.status !== 'Aktiv' && <span className="text-red-500">*</span>}
+                          </label>
+                          <input
+                            type="date"
+                            value={editedServiceData.endDate || ''}
+                            onChange={(e) => setEditedServiceData({ ...editedServiceData, endDate: e.target.value })}
+                            disabled={editedServiceData.status === 'Genomförd'}
+                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                              editedServiceData.status === 'Genomförd' ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
+                            }`}
+                            required={editedServiceData.status !== 'Aktiv'}
+                          />
+                          {editedServiceData.status === 'Aktiv' && (
+                            <p className="mt-0.5 text-xs text-gray-500">Frivilligt för aktiva tjänster.</p>
+                          )}
+                        </div>
+
+                        {/* Ursprungligt pris */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Ursprungligt pris
                           </label>
                           <input
@@ -1063,12 +1441,15 @@ export default function EditCustomerPage() {
                                 originalPrice,
                                 price: originalPrice - (originalPrice * discount / 100),
                               });
+                              setHasUnsavedChanges(true); // Sätt hasUnsavedChanges direkt
                             }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                           />
                         </div>
+
+                        {/* Rabatt */}
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
                             Rabatt (%)
                           </label>
                           <input
@@ -1076,231 +1457,193 @@ export default function EditCustomerPage() {
                             value={editedServiceData.discount || 0}
                             onChange={(e) => {
                               const discount = parseFloat(e.target.value) || 0;
+                              // Säkerställ att originalPrice är satt - använd det nuvarande värdet eller price som fallback
                               const originalPrice = editedServiceData.originalPrice || editedServiceData.price;
+                              const newPrice = originalPrice - (originalPrice * discount / 100);
                               setEditedServiceData({
                                 ...editedServiceData,
+                                originalPrice: originalPrice, // Säkerställ att originalPrice är satt
                                 discount,
-                                price: originalPrice - (originalPrice * discount / 100),
+                                price: newPrice,
                               });
+                              setHasUnsavedChanges(true); // Sätt hasUnsavedChanges direkt
                             }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                           />
                         </div>
-                      </div>
 
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Slutpris: <span className="font-bold">{editedServiceData.price.toLocaleString('sv-SE')} kr</span>
-                        </label>
-                      </div>
-
-                      {/* Anledning till prisavvikelse */}
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">
-                          Anledning till prisavvikelse (frivillig)
-                        </label>
-                        <textarea
-                          value={editedServiceData.priceNote || ''}
-                          onChange={(e) => setEditedServiceData({ ...editedServiceData, priceNote: e.target.value })}
-                          placeholder="T.ex. 'Specialerbjudande för vår', 'Trogen kund'"
-                          className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                          rows={2}
-                        />
-                      </div>
-
-                      {/* Datum och Status */}
-                      <div className="grid grid-cols-2 gap-3">
+                        {/* Slutpris */}
                         <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Startdatum *</label>
-                          <input
-                            type="date"
-                            value={editedServiceData.date}
-                            onChange={(e) => setEditedServiceData({ ...editedServiceData, date: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">Status *</label>
-                          <select
-                            value={editedServiceData.status}
-                            onChange={(e) => setEditedServiceData({ ...editedServiceData, status: e.target.value as any })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                          >
-                            {STATUSES.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* Slutdatum */}
-                      {isMembershipService(editedServiceData.service) && editedServiceData.status !== 'Aktiv' && (
-                        <div>
-                          <label className="block text-xs font-medium text-gray-700 mb-1">
-                            Slutdatum <span className="text-xs text-gray-500">(frivillig)</span>
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Slutpris
                           </label>
-                          <input
-                            type="date"
-                            value={editedServiceData.endDate || ''}
-                            onChange={(e) => setEditedServiceData({ ...editedServiceData, endDate: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                          <div className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-gray-900 font-semibold">
+                            {editedServiceData.price.toLocaleString('sv-SE')} kr
+                          </div>
+                        </div>
+
+                        {/* Anledning till prisavvikelse */}
+                        <div className="md:col-span-4">
+                          <label className="block text-sm font-medium text-gray-900 mb-1">
+                            Anledning till prisavvikelse <span className="text-xs text-gray-500 font-normal">(frivillig)</span>
+                          </label>
+                          <textarea
+                            value={editedServiceData.priceNote || ''}
+                            onChange={(e) => setEditedServiceData({ ...editedServiceData, priceNote: e.target.value })}
+                            placeholder="T.ex. 'Specialerbjudande för vår', 'Trogen kund'"
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            rows={2}
                           />
                         </div>
-                      )}
 
-                      {/* --- Betalningsinformation (endast för memberships) --- */}
-                      {isMembershipService(editedServiceData.service) && (
-                        <div className="border-t border-gray-300 pt-4 space-y-4">
-                          <h4 className="text-sm font-semibold text-gray-800">Betalningsinformation</h4>
-
-                          {/* Betalningsmetod */}
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                              Betalningsmetod
-                            </label>
-                            <select
-                              value={editedServiceData.paymentMethod || 'Faktura'}
-                              onChange={(e) => setEditedServiceData({ ...editedServiceData, paymentMethod: e.target.value as any })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                            >
-                              {PAYMENT_METHODS.map((method) => (
-                                <option key={method} value={method}>
-                                  {method}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Faktureringsstatus */}
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                              Faktureringsstatus
-                            </label>
-                            <select
-                              value={editedServiceData.invoiceStatus || 'Ej aktuell'}
-                              onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceStatus: e.target.value as any })}
-                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                            >
-                              {INVOICE_STATUSES.map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {/* Faktureringsintervall */}
-                          {(editedServiceData.paymentMethod === 'Autogiro' || editedServiceData.paymentMethod === 'Faktura') && (
+                      {/* --- Betalningsinformation --- */}
+                      <div className="md:col-span-4 border-t border-gray-300 pt-4 mt-3">
+                        <h4 className="text-sm font-semibold text-gray-900 mb-3">Betalningsinformation</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            {/* Betalningsmetod */}
                             <div>
-                              <label className="block text-xs font-medium text-gray-700 mb-1">
-                                Faktureringsintervall
+                              <label className="block text-sm font-medium text-gray-900 mb-1">
+                                Betalningsmetod
                               </label>
                               <select
-                                value={editedServiceData.billingInterval || 'Månadsvis'}
-                                onChange={(e) => setEditedServiceData({ ...editedServiceData, billingInterval: e.target.value as any })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                                value={editedServiceData.paymentMethod || 'Faktura'}
+                                onChange={(e) => setEditedServiceData({ ...editedServiceData, paymentMethod: e.target.value as any })}
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                               >
-                                {BILLING_INTERVALS.map((interval) => (
-                                  <option key={interval} value={interval}>
-                                    {interval}
+                                {PAYMENT_METHODS.map((method) => (
+                                  <option key={method} value={method}>
+                                    {method}
                                   </option>
                                 ))}
                               </select>
                             </div>
-                          )}
 
-                          {/* Antal månader */}
-                          {editedServiceData.paymentMethod === 'Förskottsbetalning' && (
+                            {/* Faktureringsstatus */}
                             <div>
-                              <label className="block text-xs font-medium text-gray-700 mb-1">
-                                Antal månader betalda i förskott
+                              <label className="block text-sm font-medium text-gray-900 mb-1">
+                                Faktureringsstatus
+                              </label>
+                              <select
+                                value={editedServiceData.invoiceStatus || 'Ej aktuell'}
+                                onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceStatus: e.target.value as any })}
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                              >
+                                {INVOICE_STATUSES.map((status) => (
+                                  <option key={status} value={status}>
+                                    {status}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Faktureringsintervall */}
+                            {(editedServiceData.paymentMethod === 'Autogiro' || editedServiceData.paymentMethod === 'Faktura') && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-900 mb-1">
+                                  Faktureringsintervall
+                                </label>
+                                <select
+                                  value={editedServiceData.billingInterval || 'Månadsvis'}
+                                  onChange={(e) => setEditedServiceData({ ...editedServiceData, billingInterval: e.target.value as any })}
+                                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                                >
+                                  {BILLING_INTERVALS.map((interval) => (
+                                    <option key={interval} value={interval}>
+                                      {interval}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+
+                            {/* Antal månader */}
+                            {editedServiceData.paymentMethod === 'Förskottsbetalning' && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-900 mb-1">
+                                  Antal månader betalda i förskott
+                                </label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={editedServiceData.numberOfMonths || 1}
+                                  onChange={(e) => setEditedServiceData({ ...editedServiceData, numberOfMonths: parseInt(e.target.value) || 1 })}
+                                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                                />
+                              </div>
+                            )}
+
+                            {/* Nästa faktureringsdatum */}
+                            {(editedServiceData.paymentMethod === 'Autogiro' || editedServiceData.paymentMethod === 'Faktura') && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-900 mb-1">
+                                  Nästa faktureringsdatum
+                                </label>
+                                <input
+                                  type="date"
+                                  value={editedServiceData.nextInvoiceDate || ''}
+                                  onChange={(e) => setEditedServiceData({ ...editedServiceData, nextInvoiceDate: e.target.value })}
+                                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                                />
+                              </div>
+                            )}
+
+                            {/* Betald till */}
+                            {editedServiceData.paymentMethod === 'Förskottsbetalning' && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-900 mb-1">
+                                  Betald till (datum)
+                                </label>
+                                <input
+                                  type="date"
+                                  value={editedServiceData.paidUntil || ''}
+                                  onChange={(e) => setEditedServiceData({ ...editedServiceData, paidUntil: e.target.value })}
+                                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                                />
+                              </div>
+                            )}
+
+                            {/* Fakturareferens */}
+                            <div>
+                              <label className="block text-sm font-medium text-gray-900 mb-1">
+                                Fakturareferens (OCR, fakturanummer etc.)
                               </label>
                               <input
-                                type="number"
-                                min="1"
-                                value={editedServiceData.numberOfMonths || 1}
-                                onChange={(e) => setEditedServiceData({ ...editedServiceData, numberOfMonths: parseInt(e.target.value) || 1 })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                                type="text"
+                                value={editedServiceData.invoiceReference || ''}
+                                onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceReference: e.target.value })}
+                                placeholder="T.ex. OCR 123456789"
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                               />
                             </div>
-                          )}
 
-                          {/* Nästa faktureringsdatum */}
-                          {(editedServiceData.paymentMethod === 'Autogiro' || editedServiceData.paymentMethod === 'Faktura') && (
-                            <div>
-                              <label className="block text-xs font-medium text-gray-700 mb-1">
-                                Nästa faktureringsdatum
+                            {/* Faktureringsnotering */}
+                            <div className="md:col-span-3">
+                              <label className="block text-sm font-medium text-gray-900 mb-1">
+                                Faktureringsnotering <span className="text-xs text-gray-500 font-normal">(frivillig)</span>
                               </label>
-                              <input
-                                type="date"
-                                value={editedServiceData.nextInvoiceDate || ''}
-                                onChange={(e) => setEditedServiceData({ ...editedServiceData, nextInvoiceDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
+                              <textarea
+                                value={editedServiceData.invoiceNote || ''}
+                                onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceNote: e.target.value })}
+                                placeholder="Övriga noteringar om betalning/fakturering"
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                                rows={2}
                               />
                             </div>
-                          )}
-
-                          {/* Betald till */}
-                          {editedServiceData.paymentMethod === 'Förskottsbetalning' && (
-                            <div>
-                              <label className="block text-xs font-medium text-gray-700 mb-1">
-                                Betald till (datum)
-                              </label>
-                              <input
-                                type="date"
-                                value={editedServiceData.paidUntil || ''}
-                                onChange={(e) => setEditedServiceData({ ...editedServiceData, paidUntil: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                              />
-                            </div>
-                          )}
-
-                          {/* Fakturareferens */}
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                              Fakturareferens (OCR, fakturanummer etc.)
-                            </label>
-                            <input
-                              type="text"
-                              value={editedServiceData.invoiceReference || ''}
-                              onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceReference: e.target.value })}
-                              placeholder="T.ex. OCR 123456789"
-                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                            />
-                          </div>
-
-                          {/* Faktureringsnotering */}
-                          <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                              Faktureringsnotering (frivillig)
-                            </label>
-                            <textarea
-                              value={editedServiceData.invoiceNote || ''}
-                              onChange={(e) => setEditedServiceData({ ...editedServiceData, invoiceNote: e.target.value })}
-                              placeholder="Övriga noteringar om betalning/fakturering"
-                              className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#1E5A7D] text-gray-900"
-                              rows={2}
-                            />
                           </div>
                         </div>
-                      )}
+                      </div>
 
-                      {/* Knappar */}
+                      {/* Knappar - endast Avbryt här, huvudsparaknappen är längre ner */}
                       <div className="flex gap-2 pt-2 border-t border-gray-300">
-                        <button
-                          onClick={() => handleSaveEdit(entry.id)}
-                          className="px-4 py-2 bg-[#1E5A7D] text-white rounded text-sm hover:bg-[#0C3B5C] transition font-medium"
-                        >
-                          💾 Spara ändringar
-                        </button>
                         <button
                           onClick={handleCancelEdit}
                           className="px-4 py-2 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition"
                         >
-                          Avbryt
+                          Avbryt redigering
                         </button>
+                        <p className="text-xs text-gray-500 flex items-center ml-auto">
+                          Använd sparaknappen längre ner på sidan för att spara ändringar
+                        </p>
                       </div>
                     </div>
                   ) : (
@@ -1351,10 +1694,58 @@ export default function EditCustomerPage() {
                         
                         <div className="flex items-center gap-4 text-sm text-gray-600">
                           <span>Start: {format(new Date(entry.date), 'd MMM yyyy', { locale: sv })}</span>
-                          {entry.endDate && (
-                            <span className="text-red-600">
+                          {entry.endDate ? (
+                            <span className="text-gray-700">
                               Slut: {format(new Date(entry.endDate), 'd MMM yyyy', { locale: sv })}
                             </span>
+                          ) : (
+                            <span className="text-green-700 font-medium">
+                              Pågående (aktiv)
+                            </span>
+                          )}
+                          {entry.coach && (
+                            <div className="flex flex-col gap-1">
+                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                                Coach: {entry.coach}
+                              </span>
+                              {entry.coachHistory && entry.coachHistory.length > 0 && (
+                                <div className="text-xs text-gray-600 bg-purple-50 p-2 rounded border border-purple-200 mt-1">
+                                  {entry.coachHistory.length > 1 ? (
+                                    <>
+                                      <p className="font-medium mb-1">Coach-byten:</p>
+                                      {entry.coachHistory.map((change, idx) => {
+                                        const nextChange = idx < entry.coachHistory!.length - 1 
+                                          ? entry.coachHistory![idx + 1]
+                                          : null;
+                                        const periodEnd = nextChange 
+                                          ? format(new Date(nextChange.date), 'd MMM yyyy', { locale: sv })
+                                          : (entry.endDate 
+                                            ? format(new Date(entry.endDate), 'd MMM yyyy', { locale: sv })
+                                            : 'pågående');
+                                        
+                                        return (
+                                          <div key={idx} className="text-xs">
+                                            <span className="font-medium">{change.coach}</span>
+                                            {' '}
+                                            <span className="text-gray-500">
+                                              ({format(new Date(change.date), 'd MMM yyyy', { locale: sv })} - {periodEnd})
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </>
+                                  ) : (
+                                    <div className="text-xs">
+                                      <span className="font-medium">{entry.coachHistory[0].coach}</span>
+                                      {' '}
+                                      <span className="text-gray-500">
+                                        från {format(new Date(entry.coachHistory[0].date), 'd MMM yyyy', { locale: sv })}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           )}
                           {isMembershipService(entry.service) && (() => {
                             const startDate = new Date(entry.date);
@@ -1378,8 +1769,8 @@ export default function EditCustomerPage() {
                           </span>
                         </div>
 
-                        {/* Betalningsinformation (endast för memberships) */}
-                        {isMembershipService(entry.service) && entry.paymentMethod && (
+                        {/* Betalningsinformation */}
+                        {entry.paymentMethod && (
                           <div className="mt-3 pt-3 border-t border-gray-200">
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div>
@@ -1508,6 +1899,7 @@ export default function EditCustomerPage() {
                       if (isMembershipService(entry.service)) {
                         // Beräkna antal månader tjänsten varit aktiv
                         const startDate = new Date(entry.date);
+                        // För aktiva tjänster utan slutdatum, använd idag för beräkning
                         const endDate = entry.endDate ? new Date(entry.endDate) : (entry.status === 'Aktiv' ? new Date() : startDate);
                         
                         // Räkna månader mellan start och slut
@@ -1550,11 +1942,31 @@ export default function EditCustomerPage() {
         </div>
       </div>
 
-      {/* Spara/Avbryt knappar */}
-      <div className="flex gap-4 mt-6 sticky bottom-0 bg-blue-50 py-4 -mx-8 px-8 border-t border-gray-200">
+      {/* Spara/Avbryt knappar - visas alltid längst ner */}
+      <div className={`flex gap-4 mt-6 sticky bottom-0 py-4 -mx-8 px-8 border-t-2 shadow-lg transition-all ${
+        hasUnsavedChanges 
+          ? 'bg-yellow-50 border-yellow-400' 
+          : 'bg-blue-50 border-blue-200'
+      }`}>
+        {hasUnsavedChanges && (
+          <div className="flex items-center gap-2 text-yellow-800 flex-1">
+            <span className="text-lg">⚠️</span>
+            <span className="text-sm font-medium">Du har osparade ändringar. Kom ihåg att spara innan du lämnar sidan.</span>
+          </div>
+        )}
+        {!hasUnsavedChanges && (
+          <div className="flex items-center gap-2 text-blue-800 flex-1">
+            <span className="text-sm">Alla ändringar är sparade</span>
+          </div>
+        )}
         <button
           onClick={handleSave}
-          className="flex items-center gap-2 px-6 py-3 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition font-medium shadow-sm"
+          disabled={!hasUnsavedChanges}
+          className={`flex items-center gap-2 px-6 py-3 rounded-lg transition font-medium shadow-sm ${
+            hasUnsavedChanges
+              ? 'bg-[#1E5A7D] text-white hover:bg-[#0C3B5C]'
+              : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          }`}
         >
           <Save className="w-5 h-5" />
           Spara ändringar

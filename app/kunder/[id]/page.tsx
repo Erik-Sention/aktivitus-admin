@@ -465,7 +465,7 @@ export default function EditCustomerPage() {
       // Hitta den senaste coachen i historiken
       const lastCoachEntry = coachHistory.length > 0 
         ? coachHistory[coachHistory.length - 1]
-        : { coach: oldCoach, date: entry.date };
+        : { coach: oldCoach, date: entry?.date ? new Date(entry.date) : new Date(editedServiceData.date) };
       
       // Lägg till den nya coachen med datum för när bytet skedde
       // Använd redigeringsdatumet eller idag om det är aktivt

@@ -1,6 +1,6 @@
 // Konstanter för dropdowns och listor
 
-import { Place, Sport, MembershipType, TestType, Status, PaymentMethod, InvoiceStatus, PaymentStatus, BillingInterval } from '@/types';
+import { Place, Sport, MembershipType, TestType, Status, PaymentMethod, InvoiceStatus, PaymentStatus, BillingInterval, ServiceType } from '@/types';
 
 export const PLACES: Place[] = [
   'Stockholm',

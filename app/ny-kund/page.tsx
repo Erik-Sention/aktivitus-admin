@@ -27,10 +27,19 @@ export default function NewCustomerPage() {
     sport: 'Löpning',
   });
 
-  const [paymentData, setPaymentData] = useState({
-    paymentMethod: 'Faktura' as const,
-    invoiceStatus: 'Väntar på betalning' as const,
-    billingInterval: 'Månadsvis' as const,
+  const [paymentData, setPaymentData] = useState<{
+    paymentMethod: string;
+    invoiceStatus: string;
+    billingInterval: string;
+    numberOfMonths: number;
+    nextInvoiceDate: string;
+    paidUntil: string;
+    invoiceReference: string;
+    invoiceNote: string;
+  }>({
+    paymentMethod: 'Faktura',
+    invoiceStatus: 'Väntar på betalning',
+    billingInterval: 'Månadsvis',
     numberOfMonths: 1,
     nextInvoiceDate: '',
     paidUntil: '',
@@ -168,9 +177,9 @@ export default function NewCustomerPage() {
         status: formData.status,
         sport: formData.sport,
         // Betalningsinformation per tjänst
-        paymentMethod: paymentData.paymentMethod,
-        invoiceStatus: paymentData.invoiceStatus,
-        billingInterval: paymentData.billingInterval,
+        paymentMethod: paymentData.paymentMethod as any,
+        invoiceStatus: paymentData.invoiceStatus as any,
+        billingInterval: paymentData.billingInterval as any,
         numberOfMonths: paymentData.numberOfMonths || undefined,
         nextInvoiceDate: paymentData.nextInvoiceDate ? new Date(paymentData.nextInvoiceDate) : undefined,
         paidUntil: paymentData.paidUntil ? new Date(paymentData.paidUntil) : undefined,

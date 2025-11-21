@@ -395,11 +395,11 @@ export default function ChartCard({ title, data, type = 'bar' }: ChartCardProps)
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ name, percent, value }) => {
+                label={({ name, percent, value }: { name?: string; percent?: number; value?: number }) => {
                   // Visa bara större segment (över 2%) för bättre läsbarhet
-                  if (percent < 0.02) return '';
+                  if (!percent || percent < 0.02) return '';
                   // Kortare namn för bättre läsbarhet
-                  const shortName = name.length > 25 ? name.substring(0, 22) + '...' : name;
+                  const shortName = (name || '').length > 25 ? (name || '').substring(0, 22) + '...' : (name || '');
                   return `${shortName}: ${(percent * 100).toFixed(0)}%`;
                 }}
                 outerRadius={180}

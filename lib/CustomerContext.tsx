@@ -495,8 +495,8 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
               if (serviceStartDate.getMonth() === monthIndex && serviceStartDate.getFullYear() === year) {
                 monthTests.push({
                   ...c,
-                  service: serviceItem.service,
-                  status: serviceItem.status,
+                  service: serviceItem.service as any,
+                  status: serviceItem.status as any,
                   date: serviceItem.date,
                 });
               }

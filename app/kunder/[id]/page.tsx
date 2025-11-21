@@ -26,7 +26,27 @@ export default function EditCustomerPage() {
 
   const defaultPrice = calculatePrice('Membership Standard', 'Löpning', false);
   
-  const [newService, setNewService] = useState({
+  const [newService, setNewService] = useState<{
+    service: string;
+    sport: string;
+    originalPrice: number;
+    discount: number;
+    price: number;
+    priceNote: string;
+    date: string;
+    status: string;
+    usePercentage: boolean;
+    endDate: string;
+    coach: string;
+    paymentMethod: string;
+    invoiceStatus: string;
+    billingInterval: string;
+    numberOfMonths: number;
+    nextInvoiceDate: string;
+    paidUntil: string;
+    invoiceReference: string;
+    invoiceNote: string;
+  }>({
     service: 'Membership Standard',
     sport: 'Löpning',
     originalPrice: defaultPrice,
@@ -39,9 +59,9 @@ export default function EditCustomerPage() {
     endDate: '',
     coach: '',
     // Betalningsinformation
-    paymentMethod: 'Faktura' as const,
-    invoiceStatus: 'Väntar på betalning' as const,
-    billingInterval: 'Månadsvis' as const,
+    paymentMethod: 'Faktura',
+    invoiceStatus: 'Väntar på betalning',
+    billingInterval: 'Månadsvis',
     numberOfMonths: 1,
     nextInvoiceDate: '',
     paidUntil: '',
@@ -190,9 +210,9 @@ export default function EditCustomerPage() {
       sport: newService.sport as any,
       coach: newService.coach || customer?.coach || undefined,
       // Betalningsinformation per tjänst
-      paymentMethod: newService.paymentMethod,
-      invoiceStatus: newService.invoiceStatus,
-      billingInterval: newService.billingInterval,
+      paymentMethod: newService.paymentMethod as any,
+      invoiceStatus: newService.invoiceStatus as any,
+      billingInterval: newService.billingInterval as any,
       numberOfMonths: newService.numberOfMonths || undefined,
       nextInvoiceDate: newService.nextInvoiceDate ? new Date(newService.nextInvoiceDate) : undefined,
       paidUntil: newService.paidUntil ? new Date(newService.paidUntil) : undefined,
@@ -574,10 +594,10 @@ export default function EditCustomerPage() {
                         </option>
                       ))}
                     </select>
-                    {newService.sport && getTestType(newService.service, newService.sport as any) && (
+                    {newService.sport && getTestType(newService.service as any, newService.sport as any) && (
                       <p className="mt-1 text-xs text-gray-600">
                         <span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-medium">
-                          {getTestType(newService.service, newService.sport as any)}
+                          {getTestType(newService.service as any, newService.sport as any)}
                         </span>
                       </p>
                     )}
@@ -920,7 +940,7 @@ export default function EditCustomerPage() {
                           </select>
                         ) : (
                           <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded text-sm text-gray-600 italic">
-                            {getTestType(editedServiceData.service)}
+                            {getTestType(editedServiceData.service as any, editedServiceData.sport || 'Löpning')}
                           </div>
                         )}
                       </div>

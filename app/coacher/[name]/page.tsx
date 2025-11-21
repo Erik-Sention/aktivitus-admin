@@ -5,8 +5,8 @@ import { useCustomers } from '@/lib/CustomerContext';
 import { getCoachFullName, getCoachInitials } from '@/lib/coachMapping';
 import { getTimeBudget } from '@/lib/timeBudgets';
 import { isMembershipService, isTestService, PLACES } from '@/lib/constants';
-import { getCoachHourlyRate, getCoachProfile, saveCoachProfile, CoachProfile } from '@/lib/coachProfiles';
-import { getTotalAdministrativeHoursForMonth, getAdministrativeHoursForMonth } from '@/lib/administrativeHours';
+import { getCoachHourlyRateSync, getCoachHourlyRate, getCoachProfileSync, getCoachProfile, saveCoachProfile, CoachProfile } from '@/lib/coachProfiles';
+import { getTotalAdministrativeHoursForMonthSync, getAdministrativeHoursForMonthSync } from '@/lib/administrativeHours';
 import { Customer, ServiceEntry } from '@/types';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -41,28 +41,44 @@ export default function CoachDetailPage() {
   const [isProfileExpanded, setIsProfileExpanded] = useState(false);
   
   useEffect(() => {
-    const coachProfile = getCoachProfile(coachName);
-    if (coachProfile) {
-      setProfile(coachProfile);
-      setEditedProfile(coachProfile);
-    } else {
-      // Skapa grundprofil om den inte finns
-      const defaultProfile: CoachProfile = {
-        name: coachName,
-        hourlyRate: getCoachHourlyRate(coachName),
-      };
-      setProfile(defaultProfile);
-      setEditedProfile(defaultProfile);
-    }
+    const loadProfile = async () => {
+      // Försök hämta från cache först (synkron)
+      let coachProfile = getCoachProfileSync(coachName);
+      
+      // Om inte i cache, hämta från Firebase
+      if (!coachProfile) {
+        coachProfile = await getCoachProfile(coachName);
+      }
+      
+      if (coachProfile) {
+        setProfile(coachProfile);
+        setEditedProfile(coachProfile);
+      } else {
+        // Skapa grundprofil om den inte finns
+        const defaultProfile: CoachProfile = {
+          name: coachName,
+          hourlyRate: getCoachHourlyRateSync(coachName),
+        };
+        setProfile(defaultProfile);
+        setEditedProfile(defaultProfile);
+      }
+    };
+    
+    loadProfile();
   }, [coachName]);
 
-  const hourlyRate = profile?.hourlyRate || getCoachHourlyRate(coachName);
+  const hourlyRate = profile?.hourlyRate || getCoachHourlyRateSync(coachName);
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (editedProfile) {
-      saveCoachProfile(editedProfile);
-      setProfile(editedProfile);
-      setIsEditingProfile(false);
+      try {
+        await saveCoachProfile(editedProfile);
+        setProfile(editedProfile);
+        setIsEditingProfile(false);
+      } catch (error) {
+        console.error('Error saving profile:', error);
+        alert('Kunde inte spara profil. Försök igen.');
+      }
     }
   };
 
@@ -88,8 +104,8 @@ export default function CoachDetailPage() {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0, 23, 59, 59);
     
-    // Hämta administrativa timmar för denna månad
-    const adminHours = getAdministrativeHoursForMonth(coachName, year, month);
+    // Hämta administrativa timmar för denna månad (synkron från cache)
+    const adminHours = getAdministrativeHoursForMonthSync(coachName, year, month);
 
     let activeMemberships = 0;
     let totalTests = 0;

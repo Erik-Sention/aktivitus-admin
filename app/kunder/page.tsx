@@ -104,9 +104,14 @@ export default function CustomersPage() {
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Är du säker på att du vill ta bort denna kund?')) {
-      deleteCustomer(id);
+      try {
+        await deleteCustomer(id);
+      } catch (error) {
+        console.error('Fel vid borttagning av kund:', error);
+        alert('Kunde inte ta bort kund. Kontrollera Firebase-konfigurationen.');
+      }
     }
   };
 

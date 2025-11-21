@@ -40,7 +40,9 @@ export default function InvoicingPage() {
       });
 
       if (hasUpdates) {
-        updateCustomer(customer.id, { serviceHistory: updatedHistory });
+        updateCustomer(customer.id, { serviceHistory: updatedHistory }).catch((error) => {
+          console.error('Fel vid uppdatering av kund:', error);
+        });
       }
     });
   }, [customers, updateCustomer]);
@@ -142,6 +144,8 @@ export default function InvoicingPage() {
       
       updateCustomer(customerId, {
         serviceHistory: updatedHistory,
+      }).catch((error) => {
+        console.error('Fel vid uppdatering av kund:', error);
       });
     }
   };

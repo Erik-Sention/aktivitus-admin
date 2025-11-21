@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { Customer, DashboardStats } from '@/types';
 import { isMembershipService } from './constants';
 import { logCustomerCreate, logCustomerUpdate, logCustomerDelete } from './activityLogger';
-import { getAllCustomers, subscribeToCustomers } from './realtimeDatabase';
+import { getAllCustomers, subscribeToCustomers, addCustomer as addCustomerToFirebase, updateCustomer as updateCustomerInFirebase, deleteCustomer as deleteCustomerFromFirebase } from './realtimeDatabase';
 
 // Mock customers - empty by default, will be populated from Firebase
 // mockData.ts is in .gitignore and won't be available in production builds
@@ -13,9 +13,9 @@ const mockCustomers: Customer[] = [];
 
 interface CustomerContextType {
   customers: Customer[];
-  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => void;
-  updateCustomer: (id: string, customer: Partial<Customer>) => void;
-  deleteCustomer: (id: string) => void;
+  addCustomer: (customer: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => Promise<void>;
+  updateCustomer: (id: string, customer: Partial<Customer>) => Promise<void>;
+  deleteCustomer: (id: string) => Promise<void>;
   getStats: (places?: string[], services?: string[], startDate?: string, endDate?: string) => DashboardStats;
   getCrossTable: (places: string[], services: string[]) => { place: string; [service: string]: number | string }[];
   getCrossTrendData: (places: string[], services: string[], startDate?: string, endDate?: string) => any[];
@@ -52,11 +52,10 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     
     loadCustomers();
     
-    // Prenumerera på realtidsuppdateringar
+    // Prenumerera på realtidsuppdateringar från Firebase
     const unsubscribe = subscribeToCustomers((customers) => {
-      if (customers.length > 0) {
-        setCustomers(customers);
-      }
+      // Uppdatera state när data ändras i Firebase
+      setCustomers(customers);
     });
     
     return () => {
@@ -64,37 +63,63 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const addCustomer = (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => {
-    const newCustomer: Customer = {
-      ...customerData,
-      id: `customer_${Date.now()}`,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      history: [],
-    };
-    setCustomers((prev) => [newCustomer, ...prev]);
-    // Logga skapande av kund
-    logCustomerCreate(newCustomer.id, newCustomer.name);
+  const addCustomer = async (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => {
+    try {
+      // Spara till Firebase Realtime Database
+      const customerToSave: Omit<Customer, 'id'> = {
+        ...customerData,
+        createdAt: customerData.createdAt || new Date(),
+        updatedAt: customerData.updatedAt || new Date(),
+        history: customerData.history || [],
+      };
+      
+      const firebaseId = await addCustomerToFirebase(customerToSave);
+      
+      // Logga skapande av kund
+      logCustomerCreate(firebaseId, customerData.name);
+      
+      // State uppdateras automatiskt via subscribeToCustomers listener
+    } catch (error) {
+      console.error('Fel vid sparande till Firebase:', error);
+      throw error; // Kasta vidare så att UI kan hantera felet
+    }
   };
 
-  const updateCustomer = (id: string, updates: Partial<Customer>) => {
-    setCustomers((prev) => {
-      const customer = prev.find(c => c.id === id);
+  const updateCustomer = async (id: string, updates: Partial<Customer>) => {
+    try {
+      // Spara till Firebase Realtime Database
+      await updateCustomerInFirebase(id, updates);
+      
+      // Logga uppdatering av kund
+      const customer = customers.find(c => c.id === id);
       if (customer) {
-        // Logga uppdatering av kund
         const changedFields = Object.keys(updates).join(', ');
         logCustomerUpdate(id, customer.name, changedFields);
       }
-      return prev.map((customer) =>
-        customer.id === id
-          ? { ...customer, ...updates, updatedAt: new Date() }
-          : customer
-      );
-    });
+      
+      // State uppdateras automatiskt via subscribeToCustomers listener
+    } catch (error) {
+      console.error('Fel vid uppdatering i Firebase:', error);
+      throw error; // Kasta vidare så att UI kan hantera felet
+    }
   };
 
-  const deleteCustomer = (id: string) => {
-    setCustomers((prev) => prev.filter((customer) => customer.id !== id));
+  const deleteCustomer = async (id: string) => {
+    try {
+      // Ta bort från Firebase Realtime Database
+      await deleteCustomerFromFirebase(id);
+      
+      // Logga borttagning av kund
+      const customer = customers.find(c => c.id === id);
+      if (customer) {
+        logCustomerDelete(id, customer.name);
+      }
+      
+      // State uppdateras automatiskt via subscribeToCustomers listener
+    } catch (error) {
+      console.error('Fel vid borttagning från Firebase:', error);
+      throw error; // Kasta vidare så att UI kan hantera felet
+    }
   };
 
   const getStats = (places?: string[], services?: string[], startDate?: string, endDate?: string): DashboardStats => {

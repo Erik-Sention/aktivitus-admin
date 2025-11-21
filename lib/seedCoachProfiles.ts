@@ -41,35 +41,44 @@ const coachPlaces: Record<string, { main: string; secondary?: string }> = {
 };
 
 // Funktion för att seeda coach-profiler med orter
-export const seedCoachProfiles = () => {
+export const seedCoachProfiles = async () => {
   if (typeof window === 'undefined') return;
   
-  Object.entries(coachPlaces).forEach(([coachName, places]) => {
-    const existingProfile = localStorage.getItem('coachProfiles');
-    const profiles = existingProfile ? JSON.parse(existingProfile) : {};
+  // Importera Firebase-funktioner
+  const { getAllCoachProfiles } = await import('./realtimeDatabase');
+  
+  try {
+    // Hämta befintliga profiler från Firebase
+    const existingProfiles = await getAllCoachProfiles();
     
-    // Skapa profil om den inte finns eller uppdatera orter
-    if (!profiles[coachName] || !profiles[coachName].mainPlace) {
-      const profile: CoachProfile = {
-        name: coachName,
-        hourlyRate: 375,
-        mainPlace: places.main,
-        secondaryPlace: places.secondary,
-        ...profiles[coachName], // Behåll befintlig data om den finns
-      };
+    // Seed varje coach-profil om den inte finns eller saknar mainPlace
+    for (const [coachName, places] of Object.entries(coachPlaces)) {
+      const existingProfile = existingProfiles[coachName];
       
-      saveCoachProfile(profile);
+      // Skapa profil om den inte finns eller uppdatera orter
+      if (!existingProfile || !existingProfile.mainPlace) {
+        const profile: CoachProfile = {
+          name: coachName,
+          hourlyRate: 375,
+          mainPlace: places.main,
+          secondaryPlace: places.secondary,
+          ...existingProfile, // Behåll befintlig data om den finns
+        };
+        
+        await saveCoachProfile(profile);
+      }
     }
-  });
+  } catch (error) {
+    console.error('Error seeding coach profiles:', error);
+  }
 };
 
 // Auto-seed när modulen laddas (endast i browser)
 if (typeof window !== 'undefined') {
-  // Seed endast om det inte redan finns profiler
-  const existingProfiles = localStorage.getItem('coachProfiles');
-  if (!existingProfiles || Object.keys(JSON.parse(existingProfiles)).length === 0) {
-    seedCoachProfiles();
-  }
+  // Seed endast om det inte redan finns profiler (körs asynkront i bakgrunden)
+  seedCoachProfiles().catch((error) => {
+    console.error('Error auto-seeding coach profiles:', error);
+  });
 }
 
 

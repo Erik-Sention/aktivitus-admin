@@ -5,7 +5,7 @@ import Header from '@/components/Header';
 import { FormData } from '@/types';
 import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS, INVOICE_STATUSES, BILLING_INTERVALS, calculatePrice, isTestService, isMembershipService, getTestType } from '@/lib/constants';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
-import { getCoachProfile } from '@/lib/coachProfiles';
+import { getCoachProfileSync } from '@/lib/coachProfiles';
 import { Save, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCustomers } from '@/lib/CustomerContext';
@@ -61,7 +61,7 @@ export default function NewCustomerPage() {
 
   const handleServiceChange = (selectedService: string) => {
     // Hämta senior-status från coach-profilen
-    const coachProfile = formData.coach ? getCoachProfile(formData.coach) : null;
+    const coachProfile = formData.coach ? getCoachProfileSync(formData.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(selectedService as any, formData.sport, isSeniorCoach);
@@ -78,7 +78,7 @@ export default function NewCustomerPage() {
 
   const handleSportChange = (selectedSport: string) => {
     // Hämta senior-status från coach-profilen
-    const coachProfile = formData.coach ? getCoachProfile(formData.coach) : null;
+    const coachProfile = formData.coach ? getCoachProfileSync(formData.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(formData.service, selectedSport as any, isSeniorCoach);
@@ -94,7 +94,7 @@ export default function NewCustomerPage() {
   
   const handleCoachChange = (coachName: string) => {
     // När coach ändras, uppdatera pris baserat på coach-profilens senior-status
-    const coachProfile = coachName ? getCoachProfile(coachName) : null;
+    const coachProfile = coachName ? getCoachProfileSync(coachName) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(formData.service, formData.sport, isSeniorCoach);
@@ -161,53 +161,58 @@ export default function NewCustomerPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (validateForm()) {
-      // Spara kunden till context (cache) med serviceHistory inkl betalningsinfo
-      const serviceEntry = {
-        id: `service_${Date.now()}`,
-        service: formData.service,
-        price: priceData.finalPrice,
-        originalPrice: priceData.originalPrice,
-        discount: priceData.discount !== 0 ? priceData.discount : undefined,
-        priceNote: priceData.priceNote || undefined,
-        date: new Date(formData.date),
-        status: formData.status,
-        sport: formData.sport,
-        // Betalningsinformation per tjänst
-        paymentMethod: paymentData.paymentMethod as any,
-        invoiceStatus: paymentData.invoiceStatus as any,
-        billingInterval: paymentData.billingInterval as any,
-        numberOfMonths: paymentData.numberOfMonths || undefined,
-        nextInvoiceDate: paymentData.nextInvoiceDate ? new Date(paymentData.nextInvoiceDate) : undefined,
-        paidUntil: paymentData.paidUntil ? new Date(paymentData.paidUntil) : undefined,
-        invoiceReference: paymentData.invoiceReference || undefined,
-        invoiceNote: paymentData.invoiceNote || undefined,
-      };
+      try {
+        // Spara kunden till Firebase med serviceHistory inkl betalningsinfo
+        const serviceEntry = {
+          id: `service_${Date.now()}`,
+          service: formData.service,
+          price: priceData.finalPrice,
+          originalPrice: priceData.originalPrice,
+          discount: priceData.discount !== 0 ? priceData.discount : undefined,
+          priceNote: priceData.priceNote || undefined,
+          date: new Date(formData.date),
+          status: formData.status,
+          sport: formData.sport,
+          // Betalningsinformation per tjänst
+          paymentMethod: paymentData.paymentMethod as any,
+          invoiceStatus: paymentData.invoiceStatus as any,
+          billingInterval: paymentData.billingInterval as any,
+          numberOfMonths: paymentData.numberOfMonths || undefined,
+          nextInvoiceDate: paymentData.nextInvoiceDate ? new Date(paymentData.nextInvoiceDate) : undefined,
+          paidUntil: paymentData.paidUntil ? new Date(paymentData.paidUntil) : undefined,
+          invoiceReference: paymentData.invoiceReference || undefined,
+          invoiceNote: paymentData.invoiceNote || undefined,
+        };
 
-      addCustomer({
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone || undefined,
-        date: new Date(formData.date),
-        place: formData.place,
-        coach: formData.coach,
-        service: formData.service,
-        status: formData.status,
-        price: priceData.finalPrice,
-        sport: formData.sport,
-        serviceHistory: [serviceEntry],
-      });
+        await addCustomer({
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone || undefined,
+          date: new Date(formData.date),
+          place: formData.place,
+          coach: formData.coach,
+          service: formData.service,
+          status: formData.status,
+          price: priceData.finalPrice,
+          sport: formData.sport,
+          serviceHistory: [serviceEntry],
+        });
 
-      setShowSuccess(true);
+        setShowSuccess(true);
 
-      // Navigera till kundlistan efter 1.5 sekunder
-      setTimeout(() => {
-        setShowSuccess(false);
-        router.push('/kunder');
-      }, 1500);
+        // Navigera till kundlistan efter 1.5 sekunder
+        setTimeout(() => {
+          setShowSuccess(false);
+          router.push('/kunder');
+        }, 1500);
+      } catch (error) {
+        console.error('Fel vid sparande av kund:', error);
+        alert('Kunde inte spara kund. Kontrollera Firebase-konfigurationen.');
+      }
     }
   };
 

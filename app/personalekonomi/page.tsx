@@ -5,8 +5,8 @@ import { useCustomers } from '@/lib/CustomerContext';
 import { getTimeBudget, isMembershipTimeBudget } from '@/lib/timeBudgets';
 import { isMembershipService, isTestService, PLACES, PAYMENT_STATUSES } from '@/lib/constants';
 import { getCoachFullName } from '@/lib/coachMapping';
-import { getCoachHourlyRate } from '@/lib/coachProfiles';
-import { getTotalAdministrativeHoursForMonth } from '@/lib/administrativeHours';
+import { getCoachHourlyRateSync } from '@/lib/coachProfiles';
+import { getTotalAdministrativeHoursForMonthSync } from '@/lib/administrativeHours';
 import { Customer, ServiceEntry, Place, PaymentStatus } from '@/types';
 import { DollarSign, Clock, Users, TrendingUp, MapPin, FileCheck, CheckCircle, CheckSquare, Square, FileText } from 'lucide-react';
 import Link from 'next/link';
@@ -92,7 +92,7 @@ export default function PersonalekonomiPage() {
         const statusKey = `${coachFullName}_${selectedMonth}`;
         const defaultStatus = paymentStatuses[statusKey] || 'Väntar på fullständig faktureringsinfo';
         
-        const adminHours = getTotalAdministrativeHoursForMonth(coachFullName, year, month);
+        const adminHours = getTotalAdministrativeHoursForMonthSync(coachFullName, year, month);
         
         hoursMap[coachFullName] = {
           coach: coachFullName,
@@ -101,7 +101,7 @@ export default function PersonalekonomiPage() {
           otherHours: 0,
           administrativeHours: adminHours,
           totalHours: adminHours,
-          hourlyRate: getCoachHourlyRate(coachFullName),
+          hourlyRate: getCoachHourlyRateSync(coachFullName),
           totalCost: 0,
           paymentStatus: defaultStatus,
         };
@@ -195,7 +195,7 @@ export default function PersonalekonomiPage() {
     Object.values(hoursMap).forEach((coachData) => {
       // Uppdatera administrativa timmar för denna månad
       const [year, month] = selectedMonth.split('-').map(Number);
-      coachData.administrativeHours = getTotalAdministrativeHoursForMonth(coachData.coach, year, month);
+      coachData.administrativeHours = getTotalAdministrativeHoursForMonthSync(coachData.coach, year, month);
       
       coachData.totalHours = coachData.membershipHours + coachData.testHours + coachData.otherHours + coachData.administrativeHours;
       

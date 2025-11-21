@@ -7,11 +7,12 @@ import { getAllCoachesFromCustomers, getCoachFullName } from '@/lib/coachMapping
 import { useCustomers } from '@/lib/CustomerContext';
 import { UserRole } from '@/types';
 import {
+  getAllAdministrativeHoursSync,
   getAllAdministrativeHours,
   addAdministrativeHour,
   updateAdministrativeHour,
   deleteAdministrativeHour,
-  getAdministrativeHoursForMonth,
+  getAdministrativeHoursForMonthSync,
 } from '@/lib/administrativeHours';
 import { AdministrativeHour, AdministrativeCategory } from '@/types/administrativeHours';
 import { Plus, Edit2, Trash2, Save, X, Calendar, Clock, FileText } from 'lucide-react';
@@ -87,8 +88,27 @@ export default function AdministrativeHoursPage() {
 
   // Ladda administrativa timmar
   useEffect(() => {
-    const hours = getAllAdministrativeHours();
-    setAdminHours(hours);
+    const loadHours = async () => {
+      try {
+        // Försök hämta från cache först (synkron)
+        const cachedHours = getAllAdministrativeHoursSync();
+        if (cachedHours.length > 0) {
+          setAdminHours(cachedHours);
+        }
+        
+        // Hämta från Firebase och uppdatera
+        const hours = await getAllAdministrativeHours();
+        setAdminHours(hours);
+      } catch (error) {
+        console.error('Error loading administrative hours:', error);
+        // Använd cache om Firebase-förfrågan misslyckas
+        setAdminHours(getAllAdministrativeHoursSync());
+      }
+    };
+    
+    loadHours();
+    
+    // Prenumerera på realtidsuppdateringar kommer att hanteras av cache-systemet
   }, []);
 
   // Filtrera timmar baserat på vald coach och månad
@@ -118,7 +138,7 @@ export default function AdministrativeHoursPage() {
     return filteredHours.reduce((sum, h) => sum + h.hours, 0);
   }, [filteredHours]);
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     // Om användaren är coach, använd deras eget namn
     const coachNameToSave = isCoachLocked ? (defaultCoachName || formData.coachName) : formData.coachName;
     
@@ -127,24 +147,30 @@ export default function AdministrativeHoursPage() {
       return;
     }
 
-    const newHour = addAdministrativeHour(
-      coachNameToSave,
-      new Date(formData.date),
-      formData.hours,
-      formData.description,
-      formData.category,
-      userEmail
-    );
+    try {
+      const newHour = await addAdministrativeHour(
+        coachNameToSave,
+        new Date(formData.date),
+        formData.hours,
+        formData.description,
+        formData.category,
+        userEmail
+      );
 
-    setAdminHours([...adminHours, newHour]);
-    setIsAdding(false);
-    setFormData({
-      coachName: isCoachLocked ? (defaultCoachName || '') : (selectedCoach || ''),
-      date: new Date().toISOString().split('T')[0],
-      hours: 0.5,
-      description: '',
-      category: 'Annat',
-    });
+      // State kommer att uppdateras via cache/subscription, men uppdatera lokalt också för snabbare UI
+      setAdminHours([...adminHours, newHour]);
+      setIsAdding(false);
+      setFormData({
+        coachName: isCoachLocked ? (defaultCoachName || '') : (selectedCoach || ''),
+        date: new Date().toISOString().split('T')[0],
+        hours: 0.5,
+        description: '',
+        category: 'Annat',
+      });
+    } catch (error) {
+      console.error('Error adding administrative hour:', error);
+      alert('Kunde inte lägga till administrativa timmar. Försök igen.');
+    }
   };
 
   const handleEdit = (hour: AdministrativeHour) => {
@@ -165,46 +191,52 @@ export default function AdministrativeHoursPage() {
     setIsAdding(false);
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editingId) return;
 
     // Om användaren är coach, använd deras eget namn
     const coachNameToSave = isCoachLocked ? (defaultCoachName || formData.coachName) : formData.coachName;
 
-    const updated = updateAdministrativeHour(editingId, {
-      coachName: coachNameToSave,
-      date: new Date(formData.date),
-      hours: formData.hours,
-      description: formData.description,
-      category: formData.category,
-    });
-
-    if (updated) {
-      const updatedHours = adminHours.map(h =>
-        h.id === editingId
-          ? {
-              ...h,
-              coachName: formData.coachName,
-              date: new Date(formData.date),
-              hours: formData.hours,
-              description: formData.description,
-              category: formData.category,
-            }
-          : h
-      );
-      setAdminHours(updatedHours);
-      setEditingId(null);
-      setFormData({
-        coachName: selectedCoach || '',
-        date: new Date().toISOString().split('T')[0],
-        hours: 0.5,
-        description: '',
-        category: 'Annat',
+    try {
+      const updated = await updateAdministrativeHour(editingId, {
+        coachName: coachNameToSave,
+        date: new Date(formData.date),
+        hours: formData.hours,
+        description: formData.description,
+        category: formData.category,
       });
+
+      if (updated) {
+        // State kommer att uppdateras via cache/subscription, men uppdatera lokalt också för snabbare UI
+        const updatedHours = adminHours.map(h =>
+          h.id === editingId
+            ? {
+                ...h,
+                coachName: formData.coachName,
+                date: new Date(formData.date),
+                hours: formData.hours,
+                description: formData.description,
+                category: formData.category,
+              }
+            : h
+        );
+        setAdminHours(updatedHours);
+        setEditingId(null);
+        setFormData({
+          coachName: selectedCoach || '',
+          date: new Date().toISOString().split('T')[0],
+          hours: 0.5,
+          description: '',
+          category: 'Annat',
+        });
+      }
+    } catch (error) {
+      console.error('Error updating administrative hour:', error);
+      alert('Kunde inte uppdatera administrativa timmar. Försök igen.');
     }
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!confirm('Är du säker på att du vill ta bort denna registrering?')) return;
 
     // Om användaren är coach, kontrollera att de bara kan ta bort sina egna timmar
@@ -214,9 +246,15 @@ export default function AdministrativeHoursPage() {
       return;
     }
 
-    const deleted = deleteAdministrativeHour(id);
-    if (deleted) {
-      setAdminHours(adminHours.filter(h => h.id !== id));
+    try {
+      const deleted = await deleteAdministrativeHour(id);
+      if (deleted) {
+        // State kommer att uppdateras via cache/subscription, men uppdatera lokalt också för snabbare UI
+        setAdminHours(adminHours.filter(h => h.id !== id));
+      }
+    } catch (error) {
+      console.error('Error deleting administrative hour:', error);
+      alert('Kunde inte ta bort administrativa timmar. Försök igen.');
     }
   };
 

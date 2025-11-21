@@ -24,41 +24,86 @@ export interface CoachProfile {
   notes?: string;
 }
 
-// Ladda coach-profil från localStorage
-export const getCoachProfile = (coachName: string): CoachProfile | null => {
-  if (typeof window === 'undefined') return null;
+// Cache för coach-profiler (för snabbare åtkomst)
+let coachProfilesCache: Record<string, CoachProfile> = {};
+let coachProfilesCacheInitialized = false;
+
+// Importera Firebase-funktioner
+import { 
+  getCoachProfile as getCoachProfileFromFirebase, 
+  saveCoachProfile as saveCoachProfileToFirebase,
+  subscribeToCoachProfiles 
+} from './realtimeDatabase';
+
+// Initiera cache och prenumerera på uppdateringar
+if (typeof window !== 'undefined' && !coachProfilesCacheInitialized) {
+  coachProfilesCacheInitialized = true;
   
-  const savedProfiles = localStorage.getItem('coachProfiles');
-  if (!savedProfiles) return null;
+  // Prenumerera på realtidsuppdateringar
+  subscribeToCoachProfiles((profiles) => {
+    coachProfilesCache = profiles;
+  });
   
-  const profiles = JSON.parse(savedProfiles);
-  return profiles[coachName] || null;
+  // Ladda initial data
+  getCoachProfileFromFirebase('').then(() => {
+    // Cache kommer att uppdateras via subscription
+  }).catch(() => {
+    // Ignorera fel vid initial laddning
+  });
+}
+
+// Ladda coach-profil från Firebase
+export const getCoachProfile = async (coachName: string): Promise<CoachProfile | null> => {
+  // Försök hämta från cache först (för synkrona anrop)
+  if (coachProfilesCache[coachName]) {
+    return coachProfilesCache[coachName];
+  }
+  
+  // Hämta från Firebase
+  try {
+    const profile = await getCoachProfileFromFirebase(coachName);
+    if (profile) {
+      coachProfilesCache[coachName] = profile;
+    }
+    return profile;
+  } catch (error) {
+    console.error('Error fetching coach profile:', error);
+    return null;
+  }
 };
 
-// Spara coach-profil till localStorage
-export const saveCoachProfile = (profile: CoachProfile): void => {
-  if (typeof window === 'undefined') return;
-  
-  const savedProfiles = localStorage.getItem('coachProfiles');
-  const profiles = savedProfiles ? JSON.parse(savedProfiles) : {};
-  
-  profiles[profile.name] = profile;
-  localStorage.setItem('coachProfiles', JSON.stringify(profiles));
+// Synkron version för bakåtkompatibilitet (använder cache)
+export const getCoachProfileSync = (coachName: string): CoachProfile | null => {
+  return coachProfilesCache[coachName] || null;
 };
 
-// Hämta timlön för en coach (från profil eller fallback till localStorage)
-export const getCoachHourlyRate = (coachName: string): number => {
-  const profile = getCoachProfile(coachName);
+// Spara coach-profil till Firebase
+export const saveCoachProfile = async (profile: CoachProfile): Promise<void> => {
+  try {
+    await saveCoachProfileToFirebase(profile);
+    // Cache kommer att uppdateras via subscription
+  } catch (error) {
+    console.error('Error saving coach profile:', error);
+    throw error;
+  }
+};
+
+// Hämta timlön för en coach (från profil eller fallback)
+export const getCoachHourlyRate = async (coachName: string): Promise<number> => {
+  const profile = await getCoachProfile(coachName);
   if (profile?.hourlyRate) {
     return profile.hourlyRate;
   }
   
-  // Fallback till gamla localStorage
-  if (typeof window === 'undefined') return 375;
-  const savedRates = localStorage.getItem('coachHourlyRates');
-  if (savedRates) {
-    const rates = JSON.parse(savedRates);
-    return rates[coachName] || 375;
+  // Fallback till standard
+  return 375;
+};
+
+// Synkron version för bakåtkompatibilitet
+export const getCoachHourlyRateSync = (coachName: string): number => {
+  const profile = getCoachProfileSync(coachName);
+  if (profile?.hourlyRate) {
+    return profile.hourlyRate;
   }
   
   return 375;

@@ -4,8 +4,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { useCustomers } from '@/lib/CustomerContext';
 import { getAllCoachesFromCustomers, getCoachFullName } from '@/lib/coachMapping';
 import { getTimeBudget } from '@/lib/timeBudgets';
-import { getCoachHourlyRate, getCoachProfile } from '@/lib/coachProfiles';
-import { getTotalAdministrativeHoursForMonth, getTotalAdministrativeHoursForPeriod } from '@/lib/administrativeHours';
+import { getCoachHourlyRateSync, getCoachProfileSync } from '@/lib/coachProfiles';
+import { getTotalAdministrativeHoursForMonthSync, getTotalAdministrativeHoursForPeriodSync } from '@/lib/administrativeHours';
 import { seedCoachProfiles } from '@/lib/seedCoachProfiles';
 import { isMembershipService, isTestService, PLACES } from '@/lib/constants';
 import { Customer, ServiceEntry, Place } from '@/types';
@@ -63,7 +63,7 @@ export default function CoacherPage() {
     }
     
     return allCoachesList.filter((coachFullName) => {
-      const profile = getCoachProfile(coachFullName);
+      const profile = getCoachProfileSync(coachFullName);
       if (!profile || !profile.mainPlace) return true; // Om ingen profil finns eller ingen huvudort, visa coachen
       
       const mainPlace = profile.mainPlace;
@@ -109,8 +109,8 @@ export default function CoacherPage() {
     // Använd filtrerade coacher istället för coacher från filtrerade kunder
     filteredCoaches.forEach((coachFullName) => {
       const adminHours = viewMode === 'month'
-        ? getTotalAdministrativeHoursForMonth(coachFullName, periodStartDate.getFullYear(), periodStartDate.getMonth() + 1)
-        : getTotalAdministrativeHoursForPeriod(coachFullName, periodStartDate, periodEndDate);
+        ? getTotalAdministrativeHoursForMonthSync(coachFullName, periodStartDate.getFullYear(), periodStartDate.getMonth() + 1)
+        : getTotalAdministrativeHoursForPeriodSync(coachFullName, periodStartDate, periodEndDate);
       
       statsMap[coachFullName] = {
         coach: coachFullName,
@@ -119,7 +119,7 @@ export default function CoacherPage() {
         totalHours: 0,
         monthlyHours: 0,
         administrativeHours: adminHours,
-        hourlyRate: getCoachHourlyRate(coachFullName),
+        hourlyRate: getCoachHourlyRateSync(coachFullName),
         monthlyCost: 0,
         monthlyRevenue: 0,
         margin: 0,
@@ -225,8 +225,8 @@ export default function CoacherPage() {
     Object.values(statsMap).forEach((stat) => {
       // Uppdatera administrativa timmar för perioden
       stat.administrativeHours = viewMode === 'month'
-        ? getTotalAdministrativeHoursForMonth(stat.coach, periodStartDate.getFullYear(), periodStartDate.getMonth() + 1)
-        : getTotalAdministrativeHoursForPeriod(stat.coach, periodStartDate, periodEndDate);
+        ? getTotalAdministrativeHoursForMonthSync(stat.coach, periodStartDate.getFullYear(), periodStartDate.getMonth() + 1)
+        : getTotalAdministrativeHoursForPeriodSync(stat.coach, periodStartDate, periodEndDate);
       
       // Total kostnad = (medlemskap/tester timmar * coachens timlön) + (administrativa timmar * 200 kr/h)
       const regularHoursCost = stat.monthlyHours * stat.hourlyRate;
@@ -414,7 +414,7 @@ export default function CoacherPage() {
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-semibold text-gray-900">{stat.coach}</h3>
-                    {getCoachProfile(stat.coach)?.isSeniorCoach && (
+                    {getCoachProfileSync(stat.coach)?.isSeniorCoach && (
                       <span className="px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full">
                         Senior
                       </span>
@@ -424,7 +424,7 @@ export default function CoacherPage() {
                     {stat.hourlyRate} kr/h
                   </p>
                   {(() => {
-                    const profile = getCoachProfile(stat.coach);
+                    const profile = getCoachProfileSync(stat.coach);
                     const places = [];
                     if (profile?.mainPlace) places.push(profile.mainPlace);
                     if (profile?.secondaryPlace) places.push(profile.secondaryPlace);

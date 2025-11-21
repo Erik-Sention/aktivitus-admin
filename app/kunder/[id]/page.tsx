@@ -13,7 +13,7 @@ import { SERVICE_COLORS } from '@/lib/constants';
 import { ServiceEntry } from '@/types';
 import MembershipTimeline from '@/components/MembershipTimeline';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
-import { getCoachProfile } from '@/lib/coachProfiles';
+import { getCoachProfileSync } from '@/lib/coachProfiles';
 
 export default function EditCustomerPage() {
   const router = useRouter();
@@ -114,7 +114,7 @@ export default function EditCustomerPage() {
 
   const handleServiceChange = (selectedService: string) => {
     // Hämta senior-status från coach-profilen
-    const coachProfile = customer?.coach ? getCoachProfile(customer.coach) : null;
+    const coachProfile = customer?.coach ? getCoachProfileSync(customer.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(
@@ -136,7 +136,7 @@ export default function EditCustomerPage() {
 
   const handleSportChangeForNewService = (selectedSport: string) => {
     // Hämta senior-status från coach-profilen
-    const coachProfile = customer?.coach ? getCoachProfile(customer.coach) : null;
+    const coachProfile = customer?.coach ? getCoachProfileSync(customer.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(
@@ -249,7 +249,7 @@ export default function EditCustomerPage() {
         serviceHistory: updatedHistory,
       });
       
-      // Uppdatera även i context så att ändringarna sparas
+      // Uppdatera även i Firebase så att ändringarna sparas
       updateCustomer(customer.id, {
         service: activeService.service as any,
         price: activeService.price,
@@ -257,11 +257,13 @@ export default function EditCustomerPage() {
         status: activeService.status as any,
         coach: newMainCoach,
         serviceHistory: updatedHistory,
+      }).catch((error) => {
+        console.error('Fel vid uppdatering av kund:', error);
       });
     }
 
     // Hämta senior-status från coach-profilen
-    const coachProfile = customer?.coach ? getCoachProfile(customer.coach) : null;
+    const coachProfile = customer?.coach ? getCoachProfileSync(customer.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
     const suggestedPrice = calculatePrice(
@@ -383,14 +385,19 @@ export default function EditCustomerPage() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (customer) {
-      updateCustomer(customer.id, { ...customer, serviceHistory: serviceHistory });
-      setShowSuccess(true);
-      setTimeout(() => {
-        setShowSuccess(false);
-        router.push('/kunder');
-      }, 1500);
+      try {
+        await updateCustomer(customer.id, { ...customer, serviceHistory: serviceHistory });
+        setShowSuccess(true);
+        setTimeout(() => {
+          setShowSuccess(false);
+          router.push('/kunder');
+        }, 1500);
+      } catch (error) {
+        console.error('Fel vid sparande av kund:', error);
+        alert('Kunde inte spara ändringar. Kontrollera Firebase-konfigurationen.');
+      }
     }
   };
 

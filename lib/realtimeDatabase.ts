@@ -59,7 +59,7 @@ export const addCustomer = async (formData: FormData): Promise<string> => {
       date: customerData.date.toISOString(),
       createdAt: customerData.createdAt.toISOString(),
       updatedAt: customerData.updatedAt.toISOString(),
-      serviceHistory: customerData.serviceHistory.map(entry => ({
+      serviceHistory: (customerData.serviceHistory || []).map(entry => ({
         ...entry,
         date: entry.date instanceof Date ? entry.date.toISOString() : entry.date,
         nextInvoiceDate: entry.nextInvoiceDate ? entry.nextInvoiceDate.toISOString() : undefined,
@@ -117,7 +117,7 @@ export const updateCustomer = async (
       updateData.createdAt = updates.createdAt instanceof Date ? updates.createdAt.toISOString() : updates.createdAt;
     }
     if (updates.serviceHistory) {
-      updateData.serviceHistory = updates.serviceHistory.map(entry => ({
+      updateData.serviceHistory = (updates.serviceHistory || []).map(entry => ({
         ...entry,
         date: entry.date instanceof Date ? entry.date.toISOString() : entry.date,
         nextInvoiceDate: entry.nextInvoiceDate ? entry.nextInvoiceDate.toISOString() : undefined,

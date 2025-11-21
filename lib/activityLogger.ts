@@ -198,3 +198,4 @@ export const cleanOldLogs = (daysToKeep: number = 30): void => {
   localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify(filteredLogs));
 };
 
+

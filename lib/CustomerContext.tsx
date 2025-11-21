@@ -39,7 +39,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
           setCustomers(firebaseCustomers);
         } else if (mockCustomers.length > 0) {
           // Fallback till mockdata om Firebase är tomt
-          setCustomers(mockCustomers);
+    setCustomers(mockCustomers);
         }
       } catch (error) {
         // Om Firebase inte är konfigurerat eller misslyckas, använd mockdata

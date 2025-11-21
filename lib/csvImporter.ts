@@ -46,7 +46,7 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
         price: parseFloat(row.price || '0'),
         sport: row.sport as any,
         history: [],
-        serviceHistory: row.serviceHistory ? JSON.parse(row.serviceHistory) : [],
+        serviceHistory: row.serviceHistory ? (JSON.parse(row.serviceHistory) as ServiceEntry[]) : [],
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -60,17 +60,29 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
       const customersRef = ref(db, 'customers');
       const newCustomerRef = push(customersRef);
       
+      const serviceHistoryArray: ServiceEntry[] = customerData.serviceHistory || [];
+      
       await set(newCustomerRef, {
-        ...customerData,
+        name: customerData.name,
+        email: customerData.email,
+        phone: customerData.phone || null,
         date: customerData.date.toISOString(),
+        place: customerData.place,
+        coach: customerData.coach,
+        service: customerData.service,
+        status: customerData.status,
+        price: customerData.price,
+        sport: customerData.sport,
+        history: customerData.history || [],
+        serviceHistory: serviceHistoryArray.map((entry: ServiceEntry) => ({
+          ...entry,
+          date: entry.date instanceof Date ? entry.date.toISOString() : (typeof entry.date === 'string' ? entry.date : new Date(entry.date).toISOString()),
+          nextInvoiceDate: entry.nextInvoiceDate ? (entry.nextInvoiceDate instanceof Date ? entry.nextInvoiceDate.toISOString() : (typeof entry.nextInvoiceDate === 'string' ? entry.nextInvoiceDate : new Date(entry.nextInvoiceDate).toISOString())) : undefined,
+          paidUntil: entry.paidUntil ? (entry.paidUntil instanceof Date ? entry.paidUntil.toISOString() : (typeof entry.paidUntil === 'string' ? entry.paidUntil : new Date(entry.paidUntil).toISOString())) : undefined,
+        })),
+        isSeniorCoach: customerData.isSeniorCoach || false,
         createdAt: customerData.createdAt.toISOString(),
         updatedAt: customerData.updatedAt.toISOString(),
-        serviceHistory: customerData.serviceHistory.map((entry: ServiceEntry) => ({
-          ...entry,
-          date: entry.date instanceof Date ? entry.date.toISOString() : entry.date,
-          nextInvoiceDate: entry.nextInvoiceDate ? entry.nextInvoiceDate.toISOString() : undefined,
-          paidUntil: entry.paidUntil ? entry.paidUntil.toISOString() : undefined,
-        })),
       });
 
       success++;
@@ -138,7 +150,7 @@ export async function importServicesFromCSV(csvText: string): Promise<{ success:
         basePrice: parseFloat(row.basePrice || '0'),
         category: row.category || 'other',
         description: row.description || '',
-        updatedAt: Timestamp.now(),
+        updatedAt: new Date().toISOString(),
       };
 
       if (!serviceData.service || serviceData.basePrice === 0) {

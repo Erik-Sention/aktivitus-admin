@@ -6,7 +6,7 @@ export interface AdministrativeHour {
   date: Date;
   hours: number;
   description: string;
-  category?: string; // Kategori som "Save samtal", "Avbokning", "Membership avslut", etc.
+  category?: AdministrativeCategory; // Kategori som "Save samtal", "Avbokning", "Membership avslut", etc.
   createdAt: Date;
   createdBy: string; // Email eller user ID
 }

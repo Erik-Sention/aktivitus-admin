@@ -4,16 +4,9 @@
 import { collection, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
 
-// Try to import mockData, but fallback to empty array if it doesn't exist
-let mockCustomers: any[] = [];
-try {
-  const mockData = require('./mockData');
-  mockCustomers = mockData.mockCustomers || [];
-} catch (e) {
-  // mockData.ts doesn't exist (e.g., in production build)
-  console.warn('mockData.ts saknas - seedDatabase kommer inte att fungera');
-  mockCustomers = [];
-}
+// Mock customers - empty by default
+// mockData.ts is in .gitignore and won't be available in production builds
+const mockCustomers: any[] = [];
 
 export async function seedDatabase() {
   try {

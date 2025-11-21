@@ -6,15 +6,10 @@ import { isMembershipService } from './constants';
 import { logCustomerCreate, logCustomerUpdate, logCustomerDelete } from './activityLogger';
 import { getAllCustomers } from './firestore';
 
-// Try to import mockData, but fallback to empty array if it doesn't exist (e.g., in production)
-let mockCustomers: Customer[] = [];
-try {
-  const mockData = require('./mockData');
-  mockCustomers = mockData.mockCustomers || [];
-} catch (e) {
-  // mockData.ts doesn't exist (e.g., in production build), use empty array
-  mockCustomers = [];
-}
+// Mock customers - empty by default, will be populated from Firebase
+// mockData.ts is in .gitignore and won't be available in production builds
+// In production, customers will be loaded from Firebase instead
+const mockCustomers: Customer[] = [];
 
 interface CustomerContextType {
   customers: Customer[];

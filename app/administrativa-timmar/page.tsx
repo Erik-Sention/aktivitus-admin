@@ -160,7 +160,7 @@ export default function AdministrativeHoursPage() {
       date: format(new Date(hour.date), 'yyyy-MM-dd'),
       hours: hour.hours,
       description: hour.description,
-      category: hour.category || 'Annat',
+      category: (hour.category as AdministrativeCategory) || 'Annat',
     });
     setIsAdding(false);
   };

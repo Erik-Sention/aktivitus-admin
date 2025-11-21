@@ -9,6 +9,19 @@ const CUSTOMERS_PATH = 'customers';
 const COACH_PROFILES_PATH = 'coachProfiles';
 const ADMINISTRATIVE_HOURS_PATH = 'administrativeHours';
 
+// Testfunktion för att verifiera Firebase-anslutning
+export const testFirebaseConnection = async (): Promise<boolean> => {
+  try {
+    const testRef = ref(db, '.info/connected');
+    const snapshot = await get(testRef);
+    console.log('Firebase connection test:', snapshot.val());
+    return true;
+  } catch (error) {
+    console.error('Firebase connection test failed:', error);
+    return false;
+  }
+};
+
 // Konvertera FormData till Customer objekt
 export const formDataToCustomer = (formData: FormData, id?: string): Omit<Customer, 'id'> => {
   return {
@@ -81,10 +94,43 @@ export const addCustomerFromFormData = async (formData: FormData): Promise<strin
 // Lägg till ny kund från Customer objekt
 export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<string> => {
   try {
+    // Kontrollera att Firebase är korrekt konfigurerad
+    const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+    const databaseURL = process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL;
+    
+    if (!apiKey || apiKey === 'demo-api-key' || apiKey.includes('demo')) {
+      const errorMsg = 'Firebase är inte korrekt konfigurerad. Kontrollera NEXT_PUBLIC_FIREBASE_API_KEY i .env.local';
+      console.error(errorMsg);
+      console.error('Current API Key:', apiKey?.substring(0, 20) + '...');
+      throw new Error(errorMsg);
+    }
+
+    if (!databaseURL || databaseURL.includes('demo')) {
+      const errorMsg = 'Firebase Database URL är inte korrekt konfigurerad. Kontrollera NEXT_PUBLIC_FIREBASE_DATABASE_URL i .env.local';
+      console.error(errorMsg);
+      console.error('Current Database URL:', databaseURL);
+      throw new Error(errorMsg);
+    }
+
+    console.log('🔵 Försöker spara kund till Firebase:', customerData.name);
+    console.log('🔵 Database URL:', databaseURL);
+    console.log('🔵 API Key:', apiKey.substring(0, 20) + '...');
+    
+    // Testa anslutningen först
+    const testRef = ref(db, '.info/connected');
+    try {
+      const testSnapshot = await get(testRef);
+      console.log('🔵 Firebase connection status:', testSnapshot.val());
+    } catch (testError) {
+      console.warn('⚠️ Kunde inte testa Firebase-anslutning:', testError);
+    }
+    
     const customersRef = ref(db, CUSTOMERS_PATH);
     const newCustomerRef = push(customersRef);
     
-    await set(newCustomerRef, {
+    console.log('🔵 Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
+    
+    const dataToSave = {
       name: customerData.name,
       email: customerData.email,
       phone: customerData.phone || null,
@@ -105,12 +151,35 @@ export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<s
       isSeniorCoach: customerData.isSeniorCoach || false,
       createdAt: customerData.createdAt instanceof Date ? customerData.createdAt.toISOString() : customerData.createdAt,
       updatedAt: customerData.updatedAt instanceof Date ? customerData.updatedAt.toISOString() : customerData.updatedAt,
+    };
+    
+    console.log('Data att spara:', dataToSave);
+    console.log('Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
+    
+    await set(newCustomerRef, dataToSave);
+    
+    const customerId = newCustomerRef.key || '';
+    console.log('✅ Kund sparad till Firebase med ID:', customerId);
+    
+    return customerId;
+  } catch (error: any) {
+    console.error('❌ Error adding customer:', error);
+    console.error('Error details:', {
+      message: error.message,
+      code: error.code,
+      stack: error.stack,
     });
     
-    return newCustomerRef.key || '';
-  } catch (error) {
-    console.error('Error adding customer:', error);
-    throw new Error('Kunde inte lägga till kund');
+    // Ge mer specifik felinformation
+    if (error.code === 'PERMISSION_DENIED') {
+      throw new Error('Ingen behörighet att spara till Firebase. Kontrollera Firebase Rules.');
+    } else if (error.code === 'UNAVAILABLE') {
+      throw new Error('Firebase är inte tillgängligt. Kontrollera din internetanslutning och Firebase-konfiguration.');
+    } else if (error.message?.includes('Firebase är inte korrekt konfigurerad')) {
+      throw error;
+    }
+    
+    throw new Error(`Kunde inte lägga till kund: ${error.message || 'Okänt fel'}`);
   }
 };
 
@@ -200,23 +269,40 @@ export const subscribeToCustomers = (
 ): (() => void) => {
   const customersRef = ref(db, CUSTOMERS_PATH);
   
-  const unsubscribe = onValue(customersRef, (snapshot) => {
-    if (!snapshot.exists()) {
+  console.log('🔵 Prenumererar på kunder från Firebase path:', CUSTOMERS_PATH);
+  
+  const unsubscribe = onValue(
+    customersRef, 
+    (snapshot) => {
+      console.log('🔵 Firebase listener triggered, snapshot exists:', snapshot.exists());
+      
+      if (!snapshot.exists()) {
+        console.log('🔵 Ingen data i Firebase, returnerar tom array');
+        callback([]);
+        return;
+      }
+      
+      const customers: Customer[] = [];
+      snapshot.forEach((childSnapshot) => {
+        const customer = snapshotToCustomer(childSnapshot.key || '', childSnapshot);
+        customers.push(customer);
+      });
+      
+      console.log('🔵 Laddade', customers.length, 'kunder från Firebase');
+      callback(customers);
+    },
+    (error) => {
+      console.error('❌ Firebase listener error:', error);
+      console.error('Error code:', error.code);
+      console.error('Error message:', error.message);
+      // Returnera tom array vid fel
       callback([]);
-      return;
     }
-    
-    const customers: Customer[] = [];
-    snapshot.forEach((childSnapshot) => {
-      const customer = snapshotToCustomer(childSnapshot.key || '', childSnapshot);
-      customers.push(customer);
-    });
-    
-    callback(customers);
-  });
+  );
   
   // Returnera unsubscribe-funktion
   return () => {
+    console.log('🔵 Avprenumererar från Firebase');
     off(customersRef, 'value', unsubscribe);
   };
 };

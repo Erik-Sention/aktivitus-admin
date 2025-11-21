@@ -209,8 +209,10 @@ export default function NewCustomerPage() {
           setShowSuccess(false);
           router.push('/kunder');
         }, 1500);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Fel vid sparande av kund:', error);
+        // Visa felmeddelande till användaren
+        alert(`Kunde inte spara kund: ${error.message || 'Okänt fel'}\n\nKontrollera browser console för mer information.`);
         alert('Kunde inte spara kund. Kontrollera Firebase-konfigurationen.');
       }
     }

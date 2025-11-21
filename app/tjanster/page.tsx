@@ -189,6 +189,7 @@ export default function TjansterPage() {
         basePrice: 0,
         category: '',
         description: '',
+        timeBudget: 0,
       });
     } catch (error: any) {
       console.error('Error saving service:', error);
@@ -381,6 +382,7 @@ export default function TjansterPage() {
                     basePrice: 0,
                     category: '',
                     description: '',
+                    timeBudget: 0,
                   });
                 }}
                 className="text-gray-400 hover:text-gray-600"
@@ -479,6 +481,7 @@ export default function TjansterPage() {
                     basePrice: 0,
                     category: '',
                     description: '',
+                    timeBudget: 0,
                   });
                 }}
                 className="flex-1 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300"

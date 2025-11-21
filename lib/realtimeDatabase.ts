@@ -342,7 +342,7 @@ export const subscribeToCustomers = (
     },
     (error) => {
       console.error('❌ Firebase listener error:', error);
-      console.error('Error code:', error.code);
+      console.error('Error code:', (error as any).code);
       console.error('Error message:', error.message);
       // Returnera tom array vid fel
       callback([]);

@@ -58,11 +58,11 @@ export const seedCoachProfiles = async () => {
       // Skapa profil om den inte finns eller uppdatera orter
       if (!existingProfile || !existingProfile.mainPlace) {
         const profile: CoachProfile = {
+          ...existingProfile, // Behåll befintlig data om den finns
           name: coachName,
-          hourlyRate: 375,
+          hourlyRate: existingProfile?.hourlyRate || 375,
           mainPlace: places.main,
           secondaryPlace: places.secondary,
-          ...existingProfile, // Behåll befintlig data om den finns
         };
         
         await saveCoachProfile(profile);

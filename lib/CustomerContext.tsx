@@ -68,9 +68,9 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       // Spara till Firebase Realtime Database
       const customerToSave: Omit<Customer, 'id'> = {
         ...customerData,
-        createdAt: customerData.createdAt || new Date(),
-        updatedAt: customerData.updatedAt || new Date(),
-        history: customerData.history || [],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        history: [],
       };
       
       const firebaseId = await addCustomerToFirebase(customerToSave);

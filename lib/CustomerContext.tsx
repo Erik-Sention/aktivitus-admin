@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { Customer, DashboardStats } from '@/types';
 import { isMembershipService } from './constants';
 import { logCustomerCreate, logCustomerUpdate, logCustomerDelete } from './activityLogger';
-import { getAllCustomers } from './firestore';
+import { getAllCustomers, subscribeToCustomers } from './realtimeDatabase';
 
 // Mock customers - empty by default, will be populated from Firebase
 // mockData.ts is in .gitignore and won't be available in production builds
@@ -29,7 +29,7 @@ const CustomerContext = createContext<CustomerContextType | undefined>(undefined
 export function CustomerProvider({ children }: { children: ReactNode }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
 
-  // Ladda kunder från Firebase eller mockdata vid första renderingen
+  // Ladda kunder från Firebase Realtime Database eller mockdata vid första renderingen
   useEffect(() => {
     const loadCustomers = async () => {
       try {
@@ -51,6 +51,17 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     };
     
     loadCustomers();
+    
+    // Prenumerera på realtidsuppdateringar
+    const unsubscribe = subscribeToCustomers((customers) => {
+      if (customers.length > 0) {
+        setCustomers(customers);
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const addCustomer = (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => {

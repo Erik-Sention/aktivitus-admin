@@ -1,0 +1,5 @@
+name,email,phone,date,place,coach,service,status,price,sport
+Anna Larsson,anna.larsson@example.com,0701234567,2024-10-15,Stockholm,Erik Helsing,Membership Standard,Aktiv,1195,Löpning
+Marcus Berg,marcus.berg@example.com,0702345678,2024-09-20,Stockholm,Erik Helsing,Membership Premium,Aktiv,2195,Cykel
+Sara Nilsson,sara.nilsson@example.com,0703456789,2024-11-05,Stockholm,Erik Helsing,Tröskeltest + VO2max,Genomförd,2241,Löpning
+

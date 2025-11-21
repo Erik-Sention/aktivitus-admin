@@ -1,0 +1,5 @@
+name,hourlyRate,isSeniorCoach,mainPlace,secondaryPlace,email,phone,address,bankAccount,swishNumber
+Erik Helsing,375,false,Stockholm,,erik.helsing@aktivitus.se,0701234567,Stockholmsgatan 1,1234-56-78901,0701234567
+Anders Carbonnier,400,true,Stockholm,Falun,anders.carbonnier@aktivitus.se,0702345678,Stockholmsgatan 2,1234-56-78902,0702345678
+Jeff Frydenlund,375,false,Stockholm,,jeff.frydenlund@aktivitus.se,0703456789,Stockholmsgatan 3,1234-56-78903,0703456789
+

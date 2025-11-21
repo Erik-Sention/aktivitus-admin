@@ -1,7 +1,7 @@
-// Utility för att importera mock-data till Firebase
+// Utility för att importera mock-data till Firebase Realtime Database
 // Kör detta en gång för att fylla databasen med testdata
 
-import { collection, addDoc, Timestamp } from 'firebase/firestore';
+import { ref, push, set } from 'firebase/database';
 import { db } from './firebase';
 
 // Mock customers - empty by default
@@ -17,19 +17,22 @@ export async function seedDatabase() {
 
     console.log('Börjar importera mock-data till Firebase...');
 
+    const customersRef = ref(db, 'customers');
+    
     for (const customer of mockCustomers) {
-      // Konvertera Date-objekt till Firestore Timestamps
+      // Konvertera Date-objekt till ISO-strängar för Realtime Database
       const customerData = {
         ...customer,
-        date: Timestamp.fromDate(customer.date),
-        createdAt: Timestamp.fromDate(customer.createdAt),
-        updatedAt: Timestamp.fromDate(customer.updatedAt),
+        date: customer.date instanceof Date ? customer.date.toISOString() : customer.date,
+        createdAt: customer.createdAt instanceof Date ? customer.createdAt.toISOString() : customer.createdAt,
+        updatedAt: customer.updatedAt instanceof Date ? customer.updatedAt.toISOString() : customer.updatedAt,
       };
 
       // Ta bort id eftersom Firebase skapar sitt eget
       const { id, ...customerWithoutId } = customerData;
+      const newCustomerRef = push(customersRef);
 
-      await addDoc(collection(db, 'customers'), customerWithoutId);
+      await set(newCustomerRef, customerWithoutId);
       console.log(`✓ Lade till: ${customer.name}`);
     }
 

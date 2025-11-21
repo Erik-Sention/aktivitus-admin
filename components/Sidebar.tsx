@@ -18,6 +18,7 @@ import {
   LogOut,
   TrendingUp,
   Clock,
+  Upload,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -82,6 +83,12 @@ const menuItems = [
     href: '/administrativa-timmar',
     icon: Clock,
     roles: ['admin', 'coach', 'platschef'] as UserRole[],
+  },
+  {
+    name: 'Import',
+    href: '/import',
+    icon: Upload,
+    roles: ['admin'] as UserRole[],
   },
   {
     name: 'Inställningar',

@@ -1,0 +1,8 @@
+service,basePrice,category,description
+Membership Standard,1195,membership,Standard medlemskap med grundläggande tester
+Membership Premium,2195,membership,Premium medlemskap med utökade tester
+Membership Supreme,3295,membership,Supreme medlemskap med alla tester
+Tröskeltest,1890,test,Grundläggande tröskeltest
+Tröskeltest + VO2max,2490,test,Tröskeltest med VO2max-mätning
+Funktionsanalys,1790,test,Funktionsanalys av rörelse
+

@@ -3,10 +3,25 @@
 
 import { collection, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from './firebase';
-import { mockCustomers } from './mockData';
+
+// Try to import mockData, but fallback to empty array if it doesn't exist
+let mockCustomers: any[] = [];
+try {
+  const mockData = require('./mockData');
+  mockCustomers = mockData.mockCustomers || [];
+} catch (e) {
+  // mockData.ts doesn't exist (e.g., in production build)
+  console.warn('mockData.ts saknas - seedDatabase kommer inte att fungera');
+  mockCustomers = [];
+}
 
 export async function seedDatabase() {
   try {
+    if (mockCustomers.length === 0) {
+      console.warn('Ingen mockdata tillgänglig - seedDatabase kommer inte att importera något');
+      return false;
+    }
+
     console.log('Börjar importera mock-data till Firebase...');
 
     for (const customer of mockCustomers) {

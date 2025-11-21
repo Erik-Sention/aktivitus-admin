@@ -63,7 +63,8 @@ export const getAllCustomers = async (): Promise<Customer[]> => {
         id: doc.id,
         name: data.name,
         email: data.email,
-        date: data.date.toDate(),
+        phone: data.phone,
+        date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
         place: data.place,
         coach: data.coach,
         service: data.service,
@@ -71,8 +72,10 @@ export const getAllCustomers = async (): Promise<Customer[]> => {
         price: data.price,
         sport: data.sport,
         history: data.history || [],
-        createdAt: data.createdAt.toDate(),
-        updatedAt: data.updatedAt.toDate(),
+        serviceHistory: data.serviceHistory || [],
+        isSeniorCoach: data.isSeniorCoach,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt),
       });
     });
 
@@ -127,7 +130,8 @@ export const getCustomersByStatus = async (status: string): Promise<Customer[]> 
         id: doc.id,
         name: data.name,
         email: data.email,
-        date: data.date.toDate(),
+        phone: data.phone,
+        date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
         place: data.place,
         coach: data.coach,
         service: data.service,
@@ -135,8 +139,10 @@ export const getCustomersByStatus = async (status: string): Promise<Customer[]> 
         price: data.price,
         sport: data.sport,
         history: data.history || [],
-        createdAt: data.createdAt.toDate(),
-        updatedAt: data.updatedAt.toDate(),
+        serviceHistory: data.serviceHistory || [],
+        isSeniorCoach: data.isSeniorCoach,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+        updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt),
       });
     });
 

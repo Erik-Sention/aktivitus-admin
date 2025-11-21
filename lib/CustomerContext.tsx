@@ -2,9 +2,19 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Customer, DashboardStats } from '@/types';
-import { mockCustomers } from './mockData';
 import { isMembershipService } from './constants';
 import { logCustomerCreate, logCustomerUpdate, logCustomerDelete } from './activityLogger';
+import { getAllCustomers } from './firestore';
+
+// Try to import mockData, but fallback to empty array if it doesn't exist (e.g., in production)
+let mockCustomers: Customer[] = [];
+try {
+  const mockData = require('./mockData');
+  mockCustomers = mockData.mockCustomers || [];
+} catch (e) {
+  // mockData.ts doesn't exist (e.g., in production build), use empty array
+  mockCustomers = [];
+}
 
 interface CustomerContextType {
   customers: Customer[];
@@ -24,9 +34,28 @@ const CustomerContext = createContext<CustomerContextType | undefined>(undefined
 export function CustomerProvider({ children }: { children: ReactNode }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
 
-  // Ladda mockdata vid första renderingen
+  // Ladda kunder från Firebase eller mockdata vid första renderingen
   useEffect(() => {
-    setCustomers(mockCustomers);
+    const loadCustomers = async () => {
+      try {
+        // Försök ladda från Firebase först
+        const firebaseCustomers = await getAllCustomers();
+        if (firebaseCustomers.length > 0) {
+          setCustomers(firebaseCustomers);
+        } else if (mockCustomers.length > 0) {
+          // Fallback till mockdata om Firebase är tomt
+          setCustomers(mockCustomers);
+        }
+      } catch (error) {
+        // Om Firebase inte är konfigurerat eller misslyckas, använd mockdata
+        console.warn('Kunde inte ladda från Firebase, använder mockdata:', error);
+        if (mockCustomers.length > 0) {
+          setCustomers(mockCustomers);
+        }
+      }
+    };
+    
+    loadCustomers();
   }, []);
 
   const addCustomer = (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt' | 'history'>) => {

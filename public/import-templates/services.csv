@@ -1,0 +1,60 @@
+service,basePrice,category,description
+Membership Standard,1195,membership,Standard medlemskap med grundläggande tester
+Membership Standard TRI/OCR/MULTI,1295,membership,Standard medlemskap för triathlon/OCR/multisport
+Programskrivning Membership Standard,1495,membership,Standard medlemskap med programskrivning
+Membership Premium,2195,membership,Premium medlemskap med utökade tester
+Membership Premium TRI/OCR/MULTI,2295,membership,Premium medlemskap för triathlon/OCR/multisport
+Membership Supreme,3295,membership,Supreme medlemskap med alla tester
+Membership Supreme TRI/OCR/MULTI,3395,membership,Supreme medlemskap för triathlon/OCR/multisport
+Membership Life,333,membership,Livslångt medlemskap
+Membership Aktivitus Iform 4 mån,1998,membership,Iform medlemskap 4 månader
+Membership Aktivitus Iform Tillägg till MS 4 mån,1748,membership,Iform tillägg till Membership Standard 4 månader
+Membership Iform Extra månad,499,membership,Iform extra månad
+Membership Aktivitus Iform Fortsättning,990,membership,Iform fortsättning
+Membership BAS,995,membership,BAS medlemskap
+Membership Avslut NOTERA SLUTDATUM,0,membership,Medlemskap avslut - notera slutdatum
+Save - Samtal - Standard,0,membership,Save samtal standard
+Membership Utan tester,1595,membership,Medlemskap utan tester
+Membership Uppstart Coaching -  Test redan gjort och betalt,1795,membership,Uppstart coaching med test redan gjort
+Konvertering från test till membership - Till kollega,0,membership,Konvertering från test till membership
+Iform innan prisjusteringen - Sista testmomenten 2,5 h,1998,membership,Iform innan prisjustering
+Iform uppstart/återtest/coachtimme MS utförd av någon annan - Minus 1 h tid,0,membership,Iform uppstart utförd av annan
+Iform uppstart/återtest/coachtimme MS utförd till någon annan - Plus 1 h tid,0,membership,Iform uppstart utförd till annan
+Tröskeltest,1890,test,Grundläggande tröskeltest
+Tröskeltest + VO2max,2490,test,Tröskeltest med VO2max
+Tröskeltest Triathlon,2690,test,Tröskeltest för triathlon
+Tröskeltest Triathlon + VO2max,3290,test,Tröskeltest triathlon med VO2max
+VO2max fristående,1390,test,VO2max test fristående
+VO2max tillägg,600,test,VO2max tillägg till tröskeltest
+Wingate fristående,490,test,Wingate test fristående
+Wingatetest tillägg,350,test,Wingate tillägg
+Styrketest tillägg,600,test,Styrketest tillägg
+Teknikanalys tillägg,650,test,Teknikanalys tillägg
+Teknikanalys,1290,test,Teknikanalys fristående
+Funktionsanalys,1790,test,Funktionsanalys
+Funktions- och löpteknikanalys,2290,test,Funktions- och löpteknikanalys
+Hälsopaket,1990,test,Hälsopaket
+Sommardubbel,2990,test,Sommardubbel testpaket
+Sommardubbel Tri,4490,test,Sommardubbel triathlon
+Träningsprogram Sommardubbel 1500kr,1500,test,Träningsprogram sommartest
+Personlig Träning 1 - Betald yta,1190,training,Personlig träning 1 pass betald yta
+Personlig Träning 1 - Gratis yta,1190,training,Personlig träning 1 pass gratis yta
+Personlig Träning 5,5500,training,Personlig träning 5 pass
+Personlig Träning 10,10500,training,Personlig träning 10 pass
+Personlig Träning 20,19900,training,Personlig träning 20 pass
+PT-Klipp - Betald yta,1190,training,PT-klipp betald yta
+PT-Klipp - Gratis yta,1190,training,PT-klipp gratis yta
+Konvertering från test till PT20 - Till kollega,0,training,Konvertering från test till PT20
+Sen avbokning,500,other,Sen avbokning avgift
+Kroppss fett% tillägg,450,test,Kroppsfettprocent tillägg
+Kroppss fett% fristående,690,test,Kroppsfettprocent fristående
+Blodanalys,690,test,Blodanalys
+Hb endast,200,test,Hemoglobin endast
+Glucos endast,150,test,Glukos endast
+Blodfetter,400,test,Blodfetter
+Kostregistrering,3990,other,Kostregistrering
+Kostrådgivning,1250,other,Kostrådgivning
+Natriumanalys (Svettest),1690,test,Natriumanalys svettest
+Genomgång eller testdel utförd av någon annan - Minus 30 min tid,0,other,Genomgång utförd av annan
+Genomgång eller testdel utförd till någon annan - Plus 30 min tid,0,other,Genomgång utförd till annan
+

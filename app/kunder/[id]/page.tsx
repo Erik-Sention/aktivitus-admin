@@ -6,7 +6,7 @@ import Header from '@/components/Header';
 import { useCustomers } from '@/lib/CustomerContext';
 import { Customer } from '@/types';
 import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS, INVOICE_STATUSES, BILLING_INTERVALS, calculatePrice, isTestService, isMembershipService, getTestType } from '@/lib/constants';
-import { Save, X, Plus, Trash2, Edit2 } from 'lucide-react';
+import { Save, X, Plus, Trash2, Edit2, Copy } from 'lucide-react';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import { SERVICE_COLORS } from '@/lib/constants';
@@ -14,9 +14,11 @@ import { ServiceEntry } from '@/types';
 import MembershipTimeline from '@/components/MembershipTimeline';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
 import { getCoachProfileSync } from '@/lib/coachProfiles';
+import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } from '@/lib/realtimeDatabase';
 
 export default function EditCustomerPage() {
   const router = useRouter();
+  const [services, setServices] = useState<ServicePrice[]>([]);
   const params = useParams();
   const { customers, updateCustomer } = useCustomers();
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -72,6 +74,29 @@ export default function EditCustomerPage() {
   const [editingService, setEditingService] = useState<string | null>(null);
   const [editedServiceData, setEditedServiceData] = useState<any>(null);
 
+  // Ladda tjänster från Firebase
+  useEffect(() => {
+    const loadServices = async () => {
+      try {
+        const loadedServices = await getAllServicesAndPrices();
+        setServices(loadedServices);
+      } catch (error) {
+        console.error('Error loading services:', error);
+      }
+    };
+
+    loadServices();
+
+    // Prenumerera på realtidsuppdateringar
+    const unsubscribe = subscribeToServicesAndPrices((updatedServices) => {
+      setServices(updatedServices);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     const foundCustomer = customers.find((c) => c.id === params.id);
     if (foundCustomer) {
@@ -113,15 +138,18 @@ export default function EditCustomerPage() {
   };
 
   const handleServiceChange = (selectedService: string) => {
-    // Hämta senior-status från coach-profilen
-    const coachProfile = customer?.coach ? getCoachProfileSync(customer.coach) : null;
-    const isSeniorCoach = coachProfile?.isSeniorCoach || false;
+    // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
+    let suggestedPrice = 0;
+    const serviceFromFirebase = services.find(s => s.service === selectedService);
     
-    const suggestedPrice = calculatePrice(
-      selectedService as any,
-      newService.sport as any,
-      isSeniorCoach
-    );
+    if (serviceFromFirebase) {
+      // Tjänsten finns i Firebase - använd dess pris direkt
+      suggestedPrice = serviceFromFirebase.basePrice;
+    } else {
+      // Om tjänsten inte finns i Firebase, visa 0
+      suggestedPrice = 0;
+    }
+    
     const autoStatus = isTestService(selectedService) ? 'Genomförd' : 'Aktiv';
     
     setNewService({
@@ -135,15 +163,17 @@ export default function EditCustomerPage() {
   };
 
   const handleSportChangeForNewService = (selectedSport: string) => {
-    // Hämta senior-status från coach-profilen
-    const coachProfile = customer?.coach ? getCoachProfileSync(customer.coach) : null;
-    const isSeniorCoach = coachProfile?.isSeniorCoach || false;
+    // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
+    let suggestedPrice = 0;
+    const serviceFromFirebase = services.find(s => s.service === newService.service);
     
-    const suggestedPrice = calculatePrice(
-      newService.service as any,
-      selectedSport as any,
-      isSeniorCoach
-    );
+    if (serviceFromFirebase) {
+      // Tjänsten finns i Firebase - använd dess pris direkt
+      suggestedPrice = serviceFromFirebase.basePrice;
+    } else {
+      // Om tjänsten inte finns i Firebase, visa 0
+      suggestedPrice = 0;
+    }
     
     setNewService({
       ...newService,
@@ -439,6 +469,34 @@ export default function EditCustomerPage() {
           <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">Grundläggande information</h3>
             
+            {/* Database ID */}
+            {customer && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Database ID</label>
+                    <code className="text-sm text-gray-900 font-mono bg-white px-2 py-1 rounded border border-gray-300">
+                      {customer.id}
+                    </code>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(customer.id);
+                      alert('Database ID kopierat till urklipp!');
+                    }}
+                    className="px-3 py-1.5 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg flex items-center gap-2 transition"
+                    title="Kopiera Database ID"
+                  >
+                    <Copy className="w-4 h-4" />
+                    Kopiera
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Använd detta ID för att hitta kunden i Firebase Realtime Database
+                </p>
+              </div>
+            )}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-900 mb-2">Namn</label>
@@ -493,7 +551,7 @@ export default function EditCustomerPage() {
                   onChange={(value) => handleUpdateCustomer('coach', value)}
                 />
                 {customer.coach && (() => {
-                  const coachProfile = getCoachProfile(customer.coach);
+                  const coachProfile = getCoachProfileSync(customer.coach);
                   if (coachProfile?.isSeniorCoach) {
                     return (
                       <p className="mt-2 text-sm text-blue-600">
@@ -569,20 +627,56 @@ export default function EditCustomerPage() {
                       onChange={(e) => handleServiceChange(e.target.value)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     >
-                      <optgroup label="Memberships" className="text-gray-900">
-                        {MEMBERSHIPS.map((membership) => (
-                          <option key={membership} value={membership}>
-                            {membership}
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="Tester" className="text-gray-900">
-                        {TESTS.map((test) => (
-                          <option key={test} value={test}>
-                            {test}
-                          </option>
-                        ))}
-                      </optgroup>
+                      {services.length > 0 ? (
+                        <>
+                          <optgroup label="Memberships" className="text-gray-900">
+                            {services
+                              .filter(s => s.category === 'membership' || (!s.category && s.service.toLowerCase().includes('membership')))
+                              .map((service) => (
+                                <option key={service.service} value={service.service}>
+                                  {service.service}
+                                </option>
+                              ))}
+                          </optgroup>
+                          <optgroup label="Tester" className="text-gray-900">
+                            {services
+                              .filter(s => s.category === 'test' || (!s.category && !s.service.toLowerCase().includes('membership')))
+                              .map((service) => (
+                                <option key={service.service} value={service.service}>
+                                  {service.service}
+                                </option>
+                              ))}
+                          </optgroup>
+                          {services.filter(s => s.category && s.category !== 'membership' && s.category !== 'test').length > 0 && (
+                            <optgroup label="Övrigt" className="text-gray-900">
+                              {services
+                                .filter(s => s.category && s.category !== 'membership' && s.category !== 'test')
+                                .map((service) => (
+                                  <option key={service.service} value={service.service}>
+                                    {service.service}
+                                  </option>
+                                ))}
+                            </optgroup>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <optgroup label="Memberships" className="text-gray-900">
+                            {MEMBERSHIPS.map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester" className="text-gray-900">
+                            {TESTS.map((test) => (
+                              <option key={test} value={test}>
+                                {test}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </>
+                      )}
                     </select>
                   </div>
 

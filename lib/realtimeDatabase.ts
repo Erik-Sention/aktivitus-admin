@@ -4,10 +4,35 @@ import { db } from './firebase';
 import { Customer, FormData } from '@/types';
 import { CoachProfile } from './coachProfiles';
 import { AdministrativeHour, AdministrativeCategory } from '@/types/administrativeHours';
+import { PaymentStatus } from '@/types';
 
 const CUSTOMERS_PATH = 'customers';
 const COACH_PROFILES_PATH = 'coachProfiles';
 const ADMINISTRATIVE_HOURS_PATH = 'administrativeHours';
+const PAYMENT_STATUSES_PATH = 'paymentStatuses';
+
+// Hjälpfunktion för att ta bort undefined värden från objekt (Firebase tillåter inte undefined)
+const removeUndefined = (obj: any): any => {
+  if (obj === null || obj === undefined) {
+    return null;
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefined(item));
+  }
+  
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const key in obj) {
+      if (obj[key] !== undefined) {
+        cleaned[key] = removeUndefined(obj[key]);
+      }
+    }
+    return cleaned;
+  }
+  
+  return obj;
+};
 
 // Testfunktion för att verifiera Firebase-anslutning
 export const testFirebaseConnection = async (): Promise<boolean> => {
@@ -116,15 +141,6 @@ export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<s
     console.log('🔵 Database URL:', databaseURL);
     console.log('🔵 API Key:', apiKey.substring(0, 20) + '...');
     
-    // Testa anslutningen först
-    const testRef = ref(db, '.info/connected');
-    try {
-      const testSnapshot = await get(testRef);
-      console.log('🔵 Firebase connection status:', testSnapshot.val());
-    } catch (testError) {
-      console.warn('⚠️ Kunde inte testa Firebase-anslutning:', testError);
-    }
-    
     const customersRef = ref(db, CUSTOMERS_PATH);
     const newCustomerRef = push(customersRef);
     
@@ -143,20 +159,37 @@ export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<s
       sport: customerData.sport,
       history: customerData.history || [],
       serviceHistory: (customerData.serviceHistory || []).map(entry => ({
-        ...entry,
+        id: entry.id,
+        service: entry.service,
+        price: entry.price,
+        originalPrice: entry.originalPrice,
+        discount: entry.discount !== undefined && entry.discount !== null ? entry.discount : undefined,
+        priceNote: entry.priceNote || undefined,
         date: entry.date instanceof Date ? entry.date.toISOString() : (typeof entry.date === 'string' ? entry.date : new Date(entry.date).toISOString()),
+        status: entry.status,
+        sport: entry.sport,
+        paymentMethod: entry.paymentMethod,
+        invoiceStatus: entry.invoiceStatus,
+        billingInterval: entry.billingInterval,
+        numberOfMonths: entry.numberOfMonths !== undefined && entry.numberOfMonths !== null ? entry.numberOfMonths : undefined,
         nextInvoiceDate: entry.nextInvoiceDate ? (entry.nextInvoiceDate instanceof Date ? entry.nextInvoiceDate.toISOString() : (typeof entry.nextInvoiceDate === 'string' ? entry.nextInvoiceDate : new Date(entry.nextInvoiceDate).toISOString())) : undefined,
         paidUntil: entry.paidUntil ? (entry.paidUntil instanceof Date ? entry.paidUntil.toISOString() : (typeof entry.paidUntil === 'string' ? entry.paidUntil : new Date(entry.paidUntil).toISOString())) : undefined,
+        invoiceReference: entry.invoiceReference || undefined,
+        invoiceNote: entry.invoiceNote || undefined,
       })),
       isSeniorCoach: customerData.isSeniorCoach || false,
       createdAt: customerData.createdAt instanceof Date ? customerData.createdAt.toISOString() : customerData.createdAt,
       updatedAt: customerData.updatedAt instanceof Date ? customerData.updatedAt.toISOString() : customerData.updatedAt,
     };
     
-    console.log('Data att spara:', dataToSave);
-    console.log('Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
+    // Ta bort alla undefined värden innan vi sparar till Firebase
+    const cleanedData = removeUndefined(dataToSave);
     
-    await set(newCustomerRef, dataToSave);
+    console.log('🔵 Data att spara (före rensning):', dataToSave);
+    console.log('🔵 Data att spara (efter rensning):', cleanedData);
+    console.log('🔵 Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
+    
+    await set(newCustomerRef, cleanedData);
     
     const customerId = newCustomerRef.key || '';
     console.log('✅ Kund sparad till Firebase med ID:', customerId);
@@ -227,14 +260,30 @@ export const updateCustomer = async (
     }
     if (updates.serviceHistory) {
       updateData.serviceHistory = (updates.serviceHistory || []).map(entry => ({
-        ...entry,
+        id: entry.id,
+        service: entry.service,
+        price: entry.price,
+        originalPrice: entry.originalPrice,
+        discount: entry.discount !== undefined && entry.discount !== null ? entry.discount : undefined,
+        priceNote: entry.priceNote || undefined,
         date: entry.date instanceof Date ? entry.date.toISOString() : entry.date,
-        nextInvoiceDate: entry.nextInvoiceDate ? entry.nextInvoiceDate.toISOString() : undefined,
-        paidUntil: entry.paidUntil ? entry.paidUntil.toISOString() : undefined,
+        status: entry.status,
+        sport: entry.sport,
+        paymentMethod: entry.paymentMethod,
+        invoiceStatus: entry.invoiceStatus,
+        billingInterval: entry.billingInterval,
+        numberOfMonths: entry.numberOfMonths !== undefined && entry.numberOfMonths !== null ? entry.numberOfMonths : undefined,
+        nextInvoiceDate: entry.nextInvoiceDate ? (entry.nextInvoiceDate instanceof Date ? entry.nextInvoiceDate.toISOString() : (typeof entry.nextInvoiceDate === 'string' ? entry.nextInvoiceDate : new Date(entry.nextInvoiceDate).toISOString())) : undefined,
+        paidUntil: entry.paidUntil ? (entry.paidUntil instanceof Date ? entry.paidUntil.toISOString() : (typeof entry.paidUntil === 'string' ? entry.paidUntil : new Date(entry.paidUntil).toISOString())) : undefined,
+        invoiceReference: entry.invoiceReference || undefined,
+        invoiceNote: entry.invoiceNote || undefined,
       }));
     }
     
-    await update(customerRef, updateData);
+    // Ta bort alla undefined värden innan vi sparar till Firebase
+    const cleanedData = removeUndefined(updateData);
+    
+    await update(customerRef, cleanedData);
   } catch (error) {
     console.error('Error updating customer:', error);
     throw new Error('Kunde inte uppdatera kund');
@@ -370,6 +419,17 @@ export const getAllCoachProfiles = async (): Promise<Record<string, CoachProfile
   } catch (error) {
     console.error('Error fetching coach profiles:', error);
     return {};
+  }
+};
+
+// Hämta alla coach-namn från Firebase
+export const getAllCoachNames = async (): Promise<string[]> => {
+  try {
+    const profiles = await getAllCoachProfiles();
+    return Object.keys(profiles).sort();
+  } catch (error) {
+    console.error('Error fetching coach names:', error);
+    return [];
   }
 };
 
@@ -589,5 +649,169 @@ export const subscribeToAdministrativeHours = (
   return () => {
     off(hoursRef, 'value', unsubscribe);
   };
+};
+
+// ==================== SERVICES ====================
+
+const SERVICES_PATH = 'services';
+
+export interface ServicePrice {
+  service: string;
+  basePrice: number;
+  category?: string;
+  description?: string;
+  timeBudget?: number; // Timmar per månad för medlemskap, eller timmar för tester
+  updatedAt?: string;
+}
+
+const snapshotToServicePrice = (snapshot: DataSnapshot): ServicePrice => {
+  const data = snapshot.val();
+  return {
+    service: data.service || '',
+    basePrice: data.basePrice || 0,
+    category: data.category,
+    description: data.description,
+    timeBudget: data.timeBudget !== undefined ? data.timeBudget : undefined,
+    updatedAt: data.updatedAt,
+  };
+};
+
+export const getAllServicesAndPrices = async (): Promise<ServicePrice[]> => {
+  try {
+    const servicesRef = ref(db, SERVICES_PATH);
+    const snapshot = await get(servicesRef);
+    if (!snapshot.exists()) return [];
+    const services: ServicePrice[] = [];
+    snapshot.forEach((childSnapshot) => {
+      services.push(snapshotToServicePrice(childSnapshot));
+    });
+    return services;
+  } catch (error) {
+    console.error('Error fetching all services and prices:', error);
+    return [];
+  }
+};
+
+export const getServicePrice = async (serviceName: string): Promise<ServicePrice | null> => {
+  try {
+    const serviceKey = serviceName.replace(/\//g, '_').replace(/\s+/g, '_');
+    const serviceRef = ref(db, `${SERVICES_PATH}/${serviceKey}`);
+    const snapshot = await get(serviceRef);
+    return snapshot.exists() ? snapshotToServicePrice(snapshot) : null;
+  } catch (error) {
+    console.error('Error fetching service price:', error);
+    return null;
+  }
+};
+
+export const saveServicePrice = async (servicePrice: ServicePrice): Promise<void> => {
+  try {
+    const serviceKey = servicePrice.service.replace(/\//g, '_').replace(/\s+/g, '_');
+    const serviceRef = ref(db, `${SERVICES_PATH}/${serviceKey}`);
+    const dataToSave = removeUndefined({
+      ...servicePrice,
+      updatedAt: new Date().toISOString(),
+    });
+    await set(serviceRef, dataToSave);
+  } catch (error) {
+    console.error('Error saving service price:', error);
+    throw new Error('Kunde inte spara tjänst/pris');
+  }
+};
+
+export const updateServicePrice = async (oldServiceName: string, servicePrice: ServicePrice): Promise<void> => {
+  try {
+    // Om namnet ändrats, ta bort gamla och skapa ny
+    if (oldServiceName !== servicePrice.service) {
+      const oldServiceKey = oldServiceName.replace(/\//g, '_').replace(/\s+/g, '_');
+      const oldServiceRef = ref(db, `${SERVICES_PATH}/${oldServiceKey}`);
+      await remove(oldServiceRef);
+    }
+    await saveServicePrice(servicePrice);
+  } catch (error) {
+    console.error('Error updating service price:', error);
+    throw new Error('Kunde inte uppdatera tjänst/pris');
+  }
+};
+
+export const deleteServicePrice = async (serviceName: string): Promise<void> => {
+  try {
+    const serviceKey = serviceName.replace(/\//g, '_').replace(/\s+/g, '_');
+    const serviceRef = ref(db, `${SERVICES_PATH}/${serviceKey}`);
+    await remove(serviceRef);
+  } catch (error) {
+    console.error('Error deleting service price:', error);
+    throw new Error('Kunde inte ta bort tjänst/pris');
+  }
+};
+
+export const subscribeToServicesAndPrices = (
+  callback: (services: ServicePrice[]) => void
+): (() => void) => {
+  const servicesRef = ref(db, SERVICES_PATH);
+  const unsubscribe = onValue(servicesRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    const services: ServicePrice[] = [];
+    snapshot.forEach((childSnapshot) => {
+      services.push(snapshotToServicePrice(childSnapshot));
+    });
+    callback(services);
+  });
+  return () => off(servicesRef, 'value', unsubscribe);
+};
+
+// ==================== PAYMENT STATUSES ====================
+
+// Hämta alla utbetalningsstatusar
+export const getAllPaymentStatuses = async (): Promise<Record<string, PaymentStatus>> => {
+  try {
+    const statusesRef = ref(db, PAYMENT_STATUSES_PATH);
+    const snapshot = await get(statusesRef);
+    if (!snapshot.exists()) return {};
+    return snapshot.val() || {};
+  } catch (error) {
+    console.error('Error fetching payment statuses:', error);
+    return {};
+  }
+};
+
+// Spara utbetalningsstatusar
+export const savePaymentStatuses = async (statuses: Record<string, PaymentStatus>): Promise<void> => {
+  try {
+    const statusesRef = ref(db, PAYMENT_STATUSES_PATH);
+    await set(statusesRef, removeUndefined(statuses));
+  } catch (error) {
+    console.error('Error saving payment statuses:', error);
+    throw new Error('Kunde inte spara utbetalningsstatusar');
+  }
+};
+
+// Uppdatera en specifik utbetalningsstatus
+export const updatePaymentStatus = async (key: string, status: PaymentStatus): Promise<void> => {
+  try {
+    const statusRef = ref(db, `${PAYMENT_STATUSES_PATH}/${key}`);
+    await set(statusRef, status);
+  } catch (error) {
+    console.error('Error updating payment status:', error);
+    throw new Error('Kunde inte uppdatera utbetalningsstatus');
+  }
+};
+
+// Realtime listener för utbetalningsstatusar
+export const subscribeToPaymentStatuses = (
+  callback: (statuses: Record<string, PaymentStatus>) => void
+): (() => void) => {
+  const statusesRef = ref(db, PAYMENT_STATUSES_PATH);
+  const unsubscribe = onValue(statusesRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback({});
+      return;
+    }
+    callback(snapshot.val() || {});
+  });
+  return () => off(statusesRef, 'value', unsubscribe);
 };
 

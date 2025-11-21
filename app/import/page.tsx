@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import Header from '@/components/Header';
 import { importCustomersFromCSV, importCoachesFromCSV, importServicesFromCSV } from '@/lib/csvImporter';
-import { Upload, FileText, CheckCircle, XCircle, Download } from 'lucide-react';
+import { seedAllToFirebase, seedCoachesToFirebase, seedServicesToFirebase } from '@/lib/seedFirebase';
+import { Upload, FileText, CheckCircle, XCircle, Download, Zap } from 'lucide-react';
 import { getUserRoleSync } from '@/lib/auth';
 
 export default function ImportPage() {
@@ -12,7 +13,9 @@ export default function ImportPage() {
   const [csvText, setCsvText] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [result, setResult] = useState<{ success: number; errors: string[] } | null>(null);
+  const [seedResult, setSeedResult] = useState<{ coaches: { success: number; errors: string[] }; services: { success: number; errors: string[] } } | null>(null);
 
   // Only admin can access
   if (userRole !== 'admin') {
@@ -84,8 +87,8 @@ export default function ImportPage() {
   };
 
   const downloadTemplate = () => {
-    let templateContent = '';
     let filename = '';
+    let templateContent = '';
 
     switch (importType) {
       case 'customers':
@@ -95,17 +98,104 @@ Anna Larsson,anna.larsson@example.com,0701234567,2024-10-15,Stockholm,Erik Helsi
 Marcus Berg,marcus.berg@example.com,0702345678,2024-09-20,Stockholm,Erik Helsing,Membership Premium,Aktiv,2195,Cykel`;
         break;
       case 'coaches':
-        filename = 'coaches-template.csv';
-        templateContent = `name,hourlyRate,isSeniorCoach,mainPlace,secondaryPlace,email,phone,address,bankAccount,swishNumber
-Erik Helsing,375,false,Stockholm,,erik.helsing@aktivitus.se,0701234567,Stockholmsgatan 1,1234-56-78901,0701234567
-Anders Carbonnier,400,true,Stockholm,Falun,anders.carbonnier@aktivitus.se,0702345678,Stockholmsgatan 2,1234-56-78902,0702345678`;
+        filename = 'coaches.csv';
+        templateContent = `name,hourlyRate,isSeniorCoach,mainPlace,secondaryPlace,email,phone,address,bankAccount,bankName,clearingNumber,accountNumber,swishNumber,personalNumber,taxTable,notes
+Anders Carbonnier,375,false,Stockholm,Falun,,,,,,,,,
+Jeff Frydenlund,375,false,Stockholm,,,,,,,,,,
+Jimmy Carlsson,375,false,Stockholm,Linköping,,,,,,,,,,
+Kenny Steger,375,false,Stockholm,,,,,,,,,,
+Micke Hanell,375,false,Stockholm,Göteborg,,,,,,,,,,
+Gusten Nilber,375,false,Göteborg,,,,,,,,,,
+Andreas Thell,375,false,Malmö,,,,,,,,,,
+Evelina Asplund,375,false,Malmö,Göteborg,,,,,,,,,,
+Isabella Hedberg,375,false,Stockholm,,,,,,,,,,
+Jessica Unogård,375,false,Linköping,,,,,,,,,,
+Andreas Nilsson,375,false,Linköping,Stockholm,,,,,,,,,,
+Johan Hasselmark,375,false,Göteborg,Malmö,,,,,,,,,,
+Evelina Järvinen,375,false,Stockholm,,,,,,,,,,
+Erik Olsson,375,false,Göteborg,,,,,,,,,,
+Gabriel Sandör,375,false,Malmö,,,,,,,,,,
+Jenny Nae,375,false,Stockholm,Åre,,,,,,,,,,
+Johan Nielsen,375,false,Falun,,,,,,,,,,
+Linda Linhart,375,false,Stockholm,,,,,,,,,,
+Linda Sjölund,375,false,Göteborg,,,,,,,,,,
+Morgan Björkqvist,375,false,Malmö,,,,,,,,,,
+Mattias Lundqvist,375,false,Stockholm,,,,,,,,,,
+Marika Wagner,375,false,Göteborg,,,,,,,,,,
+Maria Wahlberg,375,false,Malmö,,,,,,,,,,
+Olle Bengtström,375,false,Linköping,,,,,,,,,,
+Oliver Lindblom,375,false,Stockholm,Falun,,,,,,,,,,
+Sofie Bondesson,375,false,Göteborg,,,,,,,,,,
+Tove Larsson,375,false,Malmö,,,,,,,,,,
+Selma Jormin,375,false,Stockholm,,,,,,,,,,
+Arkatix Adgren,375,false,Göteborg,Malmö,,,,,,,,,,
+Laurens Hoffer,375,false,Stockholm,,,,,,,,,,
+Amy Whyte,375,false,Malmö,,,,,,,,,,
+Natalie Persson,375,false,Göteborg,,,,,,,,,,
+Mattias Pers,375,false,Stockholm,,,,,,,,,,
+Jennifer,375,false,Linköping,,,,,,,,,,`;
         break;
       case 'services':
-        filename = 'services-template.csv';
+        filename = 'services.csv';
         templateContent = `service,basePrice,category,description
 Membership Standard,1195,membership,Standard medlemskap med grundläggande tester
+Membership Standard TRI/OCR/MULTI,1295,membership,Standard medlemskap för triathlon/OCR/multisport
+Programskrivning Membership Standard,1495,membership,Standard medlemskap med programskrivning
 Membership Premium,2195,membership,Premium medlemskap med utökade tester
-Tröskeltest,1890,test,Grundläggande tröskeltest`;
+Membership Premium TRI/OCR/MULTI,2295,membership,Premium medlemskap för triathlon/OCR/multisport
+Membership Supreme,3295,membership,Supreme medlemskap med alla tester
+Membership Supreme TRI/OCR/MULTI,3395,membership,Supreme medlemskap för triathlon/OCR/multisport
+Membership Life,333,membership,Livslångt medlemskap
+Membership Aktivitus Iform 4 mån,1998,membership,Iform medlemskap 4 månader
+Membership Aktivitus Iform Tillägg till MS 4 mån,1748,membership,Iform tillägg till Membership Standard 4 månader
+Membership Iform Extra månad,499,membership,Iform extra månad
+Membership Aktivitus Iform Fortsättning,990,membership,Iform fortsättning
+Membership BAS,995,membership,BAS medlemskap
+Membership Avslut NOTERA SLUTDATUM,0,membership,Medlemskap avslut - notera slutdatum
+Save - Samtal - Standard,0,membership,Save samtal standard
+Membership Utan tester,1595,membership,Medlemskap utan tester
+Membership Uppstart Coaching -  Test redan gjort och betalt,1795,membership,Uppstart coaching med test redan gjort
+Konvertering från test till membership - Till kollega,0,membership,Konvertering från test till membership
+Iform innan prisjusteringen - Sista testmomenten 2,5 h,1998,membership,Iform innan prisjustering
+Iform uppstart/återtest/coachtimme MS utförd av någon annan - Minus 1 h tid,0,membership,Iform uppstart utförd av annan
+Iform uppstart/återtest/coachtimme MS utförd till någon annan - Plus 1 h tid,0,membership,Iform uppstart utförd till annan
+Tröskeltest,1890,test,Grundläggande tröskeltest
+Tröskeltest + VO2max,2490,test,Tröskeltest med VO2max
+Tröskeltest Triathlon,2690,test,Tröskeltest för triathlon
+Tröskeltest Triathlon + VO2max,3290,test,Tröskeltest triathlon med VO2max
+VO2max fristående,1390,test,VO2max test fristående
+VO2max tillägg,600,test,VO2max tillägg till tröskeltest
+Wingate fristående,490,test,Wingate test fristående
+Wingatetest tillägg,350,test,Wingate tillägg
+Styrketest tillägg,600,test,Styrketest tillägg
+Teknikanalys tillägg,650,test,Teknikanalys tillägg
+Teknikanalys,1290,test,Teknikanalys fristående
+Funktionsanalys,1790,test,Funktionsanalys
+Funktions- och löpteknikanalys,2290,test,Funktions- och löpteknikanalys
+Hälsopaket,1990,test,Hälsopaket
+Sommardubbel,2990,test,Sommardubbel testpaket
+Sommardubbel Tri,4490,test,Sommardubbel triathlon
+Träningsprogram Sommardubbel 1500kr,1500,test,Träningsprogram sommartest
+Personlig Träning 1 - Betald yta,1190,training,Personlig träning 1 pass betald yta
+Personlig Träning 1 - Gratis yta,1190,training,Personlig träning 1 pass gratis yta
+Personlig Träning 5,5500,training,Personlig träning 5 pass
+Personlig Träning 10,10500,training,Personlig träning 10 pass
+Personlig Träning 20,19900,training,Personlig träning 20 pass
+PT-Klipp - Betald yta,1190,training,PT-klipp betald yta
+PT-Klipp - Gratis yta,1190,training,PT-klipp gratis yta
+Konvertering från test till PT20 - Till kollega,0,training,Konvertering från test till PT20
+Sen avbokning,500,other,Sen avbokning avgift
+Kroppss fett% tillägg,450,test,Kroppsfettprocent tillägg
+Kroppss fett% fristående,690,test,Kroppsfettprocent fristående
+Blodanalys,690,test,Blodanalys
+Hb endast,200,test,Hemoglobin endast
+Glucos endast,150,test,Glukos endast
+Blodfetter,400,test,Blodfetter
+Kostregistrering,3990,other,Kostregistrering
+Kostrådgivning,1250,other,Kostrådgivning
+Natriumanalys (Svettest),1690,test,Natriumanalys svettest
+Genomgång eller testdel utförd av någon annan - Minus 30 min tid,0,other,Genomgång utförd av annan
+Genomgång eller testdel utförd till någon annan - Plus 30 min tid,0,other,Genomgång utförd till annan`;
         break;
     }
 
@@ -160,6 +250,51 @@ Tröskeltest,1890,test,Grundläggande tröskeltest`;
                 Tjänster/Priser
               </button>
             </div>
+          </div>
+
+          {/* Quick Seed Button */}
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h3 className="font-medium text-gray-900 mb-2">Snabb seedning</h3>
+            <p className="text-sm text-gray-700 mb-3">
+              Ladda automatiskt upp alla coacher och tjänster till Firebase direkt från koden (ingen CSV behövs).
+            </p>
+            <button
+              onClick={async () => {
+                if (!confirm('Detta kommer att ladda upp alla coacher och tjänster till Firebase. Fortsätt?')) return;
+                
+                setSeeding(true);
+                setSeedResult(null);
+                
+                try {
+                  const result = await seedAllToFirebase();
+                  setSeedResult(result);
+                  
+                  if (result.coaches.errors.length === 0 && result.services.errors.length === 0) {
+                    alert(`✅ Klar! ${result.coaches.success} coacher och ${result.services.success} tjänster har laddats upp till Firebase.`);
+                  } else {
+                    alert(`Delvis klar: ${result.coaches.success} coacher och ${result.services.success} tjänster sparade. Kontrollera felmeddelanden nedan.`);
+                  }
+                } catch (error: any) {
+                  alert(`Fel vid seedning: ${error.message}`);
+                } finally {
+                  setSeeding(false);
+                }
+              }}
+              disabled={seeding}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {seeding ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Seedar...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Seed coacher och tjänster till Firebase
+                </>
+              )}
+            </button>
           </div>
 
           {/* Download Template */}
@@ -218,6 +353,41 @@ Tröskeltest,1890,test,Grundläggande tröskeltest`;
               </>
             )}
           </button>
+
+          {/* Seed Results */}
+          {seedResult && (
+            <div className={`mt-6 p-4 rounded-lg ${
+              seedResult.coaches.errors.length === 0 && seedResult.services.errors.length === 0
+                ? 'bg-green-50 border border-green-200'
+                : seedResult.coaches.success > 0 || seedResult.services.success > 0
+                ? 'bg-yellow-50 border border-yellow-200'
+                : 'bg-red-50 border border-red-200'
+            }`}>
+              <div className="flex items-center gap-2 mb-2">
+                {seedResult.coaches.errors.length === 0 && seedResult.services.errors.length === 0 ? (
+                  <CheckCircle className="w-5 h-5 text-green-600" />
+                ) : (
+                  <XCircle className="w-5 h-5 text-yellow-600" />
+                )}
+                <h3 className="font-medium text-gray-900">
+                  Seedning klar: {seedResult.coaches.success} coacher, {seedResult.services.success} tjänster
+                </h3>
+              </div>
+              {(seedResult.coaches.errors.length > 0 || seedResult.services.errors.length > 0) && (
+                <div className="mt-2">
+                  <p className="text-sm font-medium text-gray-900 mb-1">Fel:</p>
+                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1 max-h-40 overflow-y-auto">
+                    {seedResult.coaches.errors.map((error, index) => (
+                      <li key={`coach-${index}`}>{error}</li>
+                    ))}
+                    {seedResult.services.errors.map((error, index) => (
+                      <li key={`service-${index}`}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Results */}
           {result && (

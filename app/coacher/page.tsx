@@ -2,11 +2,12 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { useCustomers } from '@/lib/CustomerContext';
-import { getAllCoachesFromCustomers, getCoachFullName } from '@/lib/coachMapping';
+import { getAllCoachesFromCustomers, getCoachFullName, getAllCoachesSync } from '@/lib/coachMapping';
 import { getTimeBudget } from '@/lib/timeBudgets';
 import { getCoachHourlyRateSync, getCoachProfileSync } from '@/lib/coachProfiles';
 import { getTotalAdministrativeHoursForMonthSync, getTotalAdministrativeHoursForPeriodSync } from '@/lib/administrativeHours';
 import { seedCoachProfiles } from '@/lib/seedCoachProfiles';
+import { subscribeToCoachProfiles } from '@/lib/realtimeDatabase';
 import { isMembershipService, isTestService, PLACES } from '@/lib/constants';
 import { Customer, ServiceEntry, Place } from '@/types';
 import Link from 'next/link';
@@ -43,26 +44,51 @@ export default function CoacherPage() {
   );
   const [selectedPlaces, setSelectedPlaces] = useState<Place[]>([]);
   const [sortBy, setSortBy] = useState<SortOption>('marginal');
+  const [coachesFromFirebase, setCoachesFromFirebase] = useState<string[]>([]);
 
   // Seed coach-profiler vid första laddningen
   useEffect(() => {
     seedCoachProfiles();
   }, []);
 
-  // Hämta alla unika coacher
-  const allCoaches = useMemo(() => {
+  // Prenumerera på coach-profiler från Firebase för att få alla coacher
+  useEffect(() => {
+    const unsubscribe = subscribeToCoachProfiles((profiles: Record<string, any>) => {
+      const coachNames = Object.keys(profiles).sort();
+      setCoachesFromFirebase(coachNames);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Hämta alla coacher från Firebase (alla coacher som finns i coachProfiles)
+  // Använd state för att trigga re-render när coacher uppdateras
+  const allCoachesFromFirebase = useMemo(() => {
+    // Om state är tom, försök hämta från cache
+    return coachesFromFirebase.length > 0 ? coachesFromFirebase : getAllCoachesSync();
+  }, [coachesFromFirebase]);
+
+  // Hämta alla unika coacher från kunder (för att säkerställa att även coacher utan profil visas)
+  const allCoachesFromCustomers = useMemo(() => {
     return getAllCoachesFromCustomers(customers);
   }, [customers]);
 
+  // Kombinera coacher från Firebase och kunder (ta union för att få alla unika coacher)
+  const allCoaches = useMemo(() => {
+    const coachesSet = new Set<string>();
+    // Lägg till alla coacher från Firebase
+    allCoachesFromFirebase.forEach(coach => coachesSet.add(coach));
+    // Lägg till alla coacher från kunder (kan innehålla coacher som inte finns i Firebase ännu)
+    allCoachesFromCustomers.forEach(coach => coachesSet.add(coach));
+    return Array.from(coachesSet).sort();
+  }, [allCoachesFromFirebase, allCoachesFromCustomers]);
+
   // Filtrera coacher baserat på huvudort (endast huvudort, inte sekundär ort)
   const filteredCoaches = useMemo(() => {
-    const allCoachesList = getAllCoachesFromCustomers(customers);
-    
     if (selectedPlaces.length === 0) {
-      return allCoachesList;
+      return allCoaches;
     }
     
-    return allCoachesList.filter((coachFullName) => {
+    return allCoaches.filter((coachFullName) => {
       const profile = getCoachProfileSync(coachFullName);
       if (!profile || !profile.mainPlace) return true; // Om ingen profil finns eller ingen huvudort, visa coachen
       
@@ -71,7 +97,7 @@ export default function CoacherPage() {
       // Visa coachen endast om huvudort matchar valda platser
       return selectedPlaces.includes(mainPlace as Place);
     });
-  }, [customers, selectedPlaces]);
+  }, [allCoaches, selectedPlaces]);
 
   // Filtrera kunder - visa alla kunder för filtrerade coacher (oavsett kundens plats)
   const filteredCustomers = useMemo(() => {
@@ -271,6 +297,46 @@ export default function CoacherPage() {
     );
   };
 
+  const [showAddCoachModal, setShowAddCoachModal] = useState(false);
+  const [newCoachName, setNewCoachName] = useState('');
+  const [newCoachHourlyRate, setNewCoachHourlyRate] = useState(375);
+  const [newCoachMainPlace, setNewCoachMainPlace] = useState<Place | ''>('');
+  const [newCoachSecondaryPlace, setNewCoachSecondaryPlace] = useState<Place | ''>('');
+  const [newCoachIsSenior, setNewCoachIsSenior] = useState(false);
+  const [addingCoach, setAddingCoach] = useState(false);
+
+  const handleAddCoach = async () => {
+    if (!newCoachName.trim()) {
+      alert('Ange ett coach-namn');
+      return;
+    }
+
+    setAddingCoach(true);
+    try {
+      const { saveCoachProfile } = await import('@/lib/coachProfiles');
+      const profile = {
+        name: newCoachName.trim(),
+        hourlyRate: newCoachHourlyRate,
+        isSeniorCoach: newCoachIsSenior,
+        mainPlace: newCoachMainPlace || undefined,
+        secondaryPlace: newCoachSecondaryPlace || undefined,
+      };
+      await saveCoachProfile(profile);
+      setShowAddCoachModal(false);
+      setNewCoachName('');
+      setNewCoachHourlyRate(375);
+      setNewCoachMainPlace('');
+      setNewCoachSecondaryPlace('');
+      setNewCoachIsSenior(false);
+      alert('Coach tillagd!');
+    } catch (error: any) {
+      console.error('Error adding coach:', error);
+      alert(`Kunde inte lägga till coach: ${error.message}`);
+    } finally {
+      setAddingCoach(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -278,6 +344,13 @@ export default function CoacherPage() {
           <h1 className="text-3xl font-bold text-gray-900">Coacher</h1>
           <p className="text-gray-600 mt-1">Översikt över alla coacher och deras statistik</p>
         </div>
+        <button
+          onClick={() => setShowAddCoachModal(true)}
+          className="px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#164a66] flex items-center gap-2"
+        >
+          <User className="w-4 h-4" />
+          Lägg till coach
+        </button>
       </div>
 
       {/* Filter */}
@@ -533,6 +606,112 @@ export default function CoacherPage() {
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-600">Inga coacher hittades</p>
+        </div>
+      )}
+
+      {/* Add Coach Modal */}
+      {showAddCoachModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold text-gray-900 mb-4">Lägg till ny coach</h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-1">
+                  Namn *
+                </label>
+                <input
+                  type="text"
+                  value={newCoachName}
+                  onChange={(e) => setNewCoachName(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  placeholder="T.ex. Erik Helsing"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-1">
+                  Timlön (kr/h)
+                </label>
+                <input
+                  type="number"
+                  value={newCoachHourlyRate}
+                  onChange={(e) => setNewCoachHourlyRate(parseFloat(e.target.value) || 375)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  min="0"
+                  step="1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-1">
+                  Huvudort
+                </label>
+                <select
+                  value={newCoachMainPlace}
+                  onChange={(e) => setNewCoachMainPlace(e.target.value as Place | '')}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                >
+                  <option value="">Välj ort</option>
+                  {PLACES.map(place => (
+                    <option key={place} value={place}>{place}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-1">
+                  Sekundär ort
+                </label>
+                <select
+                  value={newCoachSecondaryPlace}
+                  onChange={(e) => setNewCoachSecondaryPlace(e.target.value as Place | '')}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                >
+                  <option value="">Välj ort</option>
+                  {PLACES.map(place => (
+                    <option key={place} value={place}>{place}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="isSenior"
+                  checked={newCoachIsSenior}
+                  onChange={(e) => setNewCoachIsSenior(e.target.checked)}
+                  className="w-4 h-4 text-[#1E5A7D] border-gray-300 rounded focus:ring-[#1E5A7D]"
+                />
+                <label htmlFor="isSenior" className="ml-2 text-sm text-gray-900">
+                  Senior coach
+                </label>
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleAddCoach}
+                disabled={addingCoach || !newCoachName.trim()}
+                className="flex-1 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#164a66] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {addingCoach ? 'Lägger till...' : 'Lägg till'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowAddCoachModal(false);
+                  setNewCoachName('');
+                  setNewCoachHourlyRate(375);
+                  setNewCoachMainPlace('');
+                  setNewCoachSecondaryPlace('');
+                  setNewCoachIsSenior(false);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300"
+              >
+                Avbryt
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Clock,
   Upload,
+  Package,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -76,6 +77,12 @@ const menuItems = [
     name: 'Coacher',
     href: '/coacher',
     icon: User,
+    roles: ['admin'] as UserRole[],
+  },
+  {
+    name: 'Tjänster',
+    href: '/tjanster',
+    icon: Package,
     roles: ['admin'] as UserRole[],
   },
   {

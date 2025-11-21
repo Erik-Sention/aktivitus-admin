@@ -1,17 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import { FormData } from '@/types';
 import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS, INVOICE_STATUSES, BILLING_INTERVALS, calculatePrice, isTestService, isMembershipService, getTestType } from '@/lib/constants';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
 import { getCoachProfileSync } from '@/lib/coachProfiles';
+import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } from '@/lib/realtimeDatabase';
 import { Save, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCustomers } from '@/lib/CustomerContext';
 
 export default function NewCustomerPage() {
   const router = useRouter();
+  const [services, setServices] = useState<ServicePrice[]>([]);
   const { addCustomer } = useCustomers();
   const suggestedPrice = calculatePrice('Membership Standard', 'Löpning', false);
   
@@ -59,12 +61,48 @@ export default function NewCustomerPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [showSuccess, setShowSuccess] = useState(false);
 
+  // Ladda tjänster från Firebase
+  useEffect(() => {
+    const loadServices = async () => {
+      try {
+        const loadedServices = await getAllServicesAndPrices();
+        setServices(loadedServices);
+      } catch (error) {
+        console.error('Error loading services:', error);
+      }
+    };
+
+    loadServices();
+
+    // Prenumerera på realtidsuppdateringar
+    const unsubscribe = subscribeToServicesAndPrices((updatedServices) => {
+      setServices(updatedServices);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   const handleServiceChange = (selectedService: string) => {
     // Hämta senior-status från coach-profilen
     const coachProfile = formData.coach ? getCoachProfileSync(formData.coach) : null;
     const isSeniorCoach = coachProfile?.isSeniorCoach || false;
     
-    const suggestedPrice = calculatePrice(selectedService as any, formData.sport, isSeniorCoach);
+    // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
+    let suggestedPrice = 0;
+    const serviceFromFirebase = services.find(s => s.service === selectedService);
+    
+    if (serviceFromFirebase) {
+      // Tjänsten finns i Firebase - använd dess pris direkt
+      suggestedPrice = serviceFromFirebase.basePrice;
+      console.log(`✅ Hittade tjänst i Firebase: ${selectedService}, pris: ${suggestedPrice} kr`);
+    } else {
+      // Om tjänsten inte finns i Firebase, visa 0 och varna
+      console.warn(`⚠️ Tjänst ${selectedService} hittades inte i Firebase. Lägg till den i databasen först.`);
+      suggestedPrice = 0;
+    }
+    
     const autoStatus = isTestService(selectedService) ? 'Genomförd' : 'Aktiv';
     
     setFormData({ ...formData, service: selectedService as any, status: autoStatus as any });
@@ -74,14 +112,22 @@ export default function NewCustomerPage() {
       finalPrice: suggestedPrice,
       discount: 0,
     });
+    
+    console.log(`💰 Satt pris för ${selectedService}: ${suggestedPrice} kr`);
   };
 
   const handleSportChange = (selectedSport: string) => {
-    // Hämta senior-status från coach-profilen
-    const coachProfile = formData.coach ? getCoachProfileSync(formData.coach) : null;
-    const isSeniorCoach = coachProfile?.isSeniorCoach || false;
+    // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
+    let suggestedPrice = 0;
+    const serviceFromFirebase = services.find(s => s.service === formData.service);
     
-    const suggestedPrice = calculatePrice(formData.service, selectedSport as any, isSeniorCoach);
+    if (serviceFromFirebase) {
+      // Tjänsten finns i Firebase - använd dess pris direkt
+      suggestedPrice = serviceFromFirebase.basePrice;
+    } else {
+      // Om tjänsten inte finns i Firebase, visa 0
+      suggestedPrice = 0;
+    }
     
     setFormData({ ...formData, sport: selectedSport as any });
     setPriceData({
@@ -93,11 +139,17 @@ export default function NewCustomerPage() {
   };
   
   const handleCoachChange = (coachName: string) => {
-    // När coach ändras, uppdatera pris baserat på coach-profilens senior-status
-    const coachProfile = coachName ? getCoachProfileSync(coachName) : null;
-    const isSeniorCoach = coachProfile?.isSeniorCoach || false;
+    // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
+    let suggestedPrice = 0;
+    const serviceFromFirebase = services.find(s => s.service === formData.service);
     
-    const suggestedPrice = calculatePrice(formData.service, formData.sport, isSeniorCoach);
+    if (serviceFromFirebase) {
+      // Tjänsten finns i Firebase - använd dess pris direkt
+      suggestedPrice = serviceFromFirebase.basePrice;
+    } else {
+      // Om tjänsten inte finns i Firebase, visa 0
+      suggestedPrice = 0;
+    }
     
     setFormData({ ...formData, coach: coachName });
     setPriceData({
@@ -340,7 +392,7 @@ export default function NewCustomerPage() {
                 <p className="mt-1 text-sm text-red-600">{errors.coach}</p>
               )}
               {formData.coach && (() => {
-                const coachProfile = getCoachProfile(formData.coach);
+                const coachProfile = getCoachProfileSync(formData.coach);
                 if (coachProfile?.isSeniorCoach) {
                   return (
                     <p className="mt-2 text-sm text-blue-600">
@@ -388,20 +440,56 @@ export default function NewCustomerPage() {
                 onChange={(e) => handleServiceChange(e.target.value)}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
               >
-                <optgroup label="Memberships" className="text-gray-900">
-                  {MEMBERSHIPS.map((membership) => (
-                    <option key={membership} value={membership}>
-                      {membership}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Tester" className="text-gray-900">
-                  {TESTS.map((test) => (
-                    <option key={test} value={test}>
-                      {test}
-                    </option>
-                  ))}
-                </optgroup>
+                {services.length > 0 ? (
+                  <>
+                    <optgroup label="Memberships" className="text-gray-900">
+                      {services
+                        .filter(s => s.category === 'membership' || (!s.category && s.service.toLowerCase().includes('membership')))
+                        .map((service) => (
+                          <option key={service.service} value={service.service}>
+                            {service.service}
+                          </option>
+                        ))}
+                    </optgroup>
+                    <optgroup label="Tester" className="text-gray-900">
+                      {services
+                        .filter(s => s.category === 'test' || (!s.category && !s.service.toLowerCase().includes('membership')))
+                        .map((service) => (
+                          <option key={service.service} value={service.service}>
+                            {service.service}
+                          </option>
+                        ))}
+                    </optgroup>
+                    {services.filter(s => s.category && s.category !== 'membership' && s.category !== 'test').length > 0 && (
+                      <optgroup label="Övrigt" className="text-gray-900">
+                        {services
+                          .filter(s => s.category && s.category !== 'membership' && s.category !== 'test')
+                          .map((service) => (
+                            <option key={service.service} value={service.service}>
+                              {service.service}
+                            </option>
+                          ))}
+                      </optgroup>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <optgroup label="Memberships" className="text-gray-900">
+                      {MEMBERSHIPS.map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester" className="text-gray-900">
+                      {TESTS.map((test) => (
+                        <option key={test} value={test}>
+                          {test}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </>
+                )}
               </select>
             </div>
 

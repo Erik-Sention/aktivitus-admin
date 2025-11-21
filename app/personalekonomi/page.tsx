@@ -7,6 +7,7 @@ import { isMembershipService, isTestService, PLACES, PAYMENT_STATUSES } from '@/
 import { getCoachFullName } from '@/lib/coachMapping';
 import { getCoachHourlyRateSync } from '@/lib/coachProfiles';
 import { getTotalAdministrativeHoursForMonthSync } from '@/lib/administrativeHours';
+import { getAllPaymentStatuses, subscribeToPaymentStatuses, updatePaymentStatus } from '@/lib/realtimeDatabase';
 import { Customer, ServiceEntry, Place, PaymentStatus } from '@/types';
 import { DollarSign, Clock, Users, TrendingUp, MapPin, FileCheck, CheckCircle, CheckSquare, Square, FileText } from 'lucide-react';
 import Link from 'next/link';
@@ -32,19 +33,31 @@ export default function PersonalekonomiPage() {
   const [selectedPaymentStatuses, setSelectedPaymentStatuses] = useState<PaymentStatus[]>([]);
   const [selectedCoaches, setSelectedCoaches] = useState<Set<string>>(new Set());
   
-  // Spara utbetalningsstatusar per coach och månad
-  const [paymentStatuses, setPaymentStatuses] = useState<Record<string, PaymentStatus>>(() => {
-    if (typeof window === 'undefined') return {};
-    const stored = localStorage.getItem('coachPaymentStatuses');
-    return stored ? JSON.parse(stored) : {};
-  });
+  // Spara utbetalningsstatusar per coach och månad - nu från Firebase
+  const [paymentStatuses, setPaymentStatuses] = useState<Record<string, PaymentStatus>>({});
 
-  // Spara statusar till localStorage när de ändras
+  // Ladda utbetalningsstatusar från Firebase
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('coachPaymentStatuses', JSON.stringify(paymentStatuses));
-    }
-  }, [paymentStatuses]);
+    const loadPaymentStatuses = async () => {
+      try {
+        const statuses = await getAllPaymentStatuses();
+        setPaymentStatuses(statuses);
+      } catch (error) {
+        console.error('Error loading payment statuses:', error);
+      }
+    };
+
+    loadPaymentStatuses();
+
+    // Prenumerera på realtidsuppdateringar
+    const unsubscribe = subscribeToPaymentStatuses((updatedStatuses) => {
+      setPaymentStatuses(updatedStatuses);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   // Filtrera kunder baserat på ort och faktureringsstatus
   const filteredCustomers = useMemo(() => {
@@ -443,13 +456,26 @@ export default function PersonalekonomiPage() {
             {PAYMENT_STATUSES.map((status) => (
               <button
                 key={status}
-                onClick={() => {
+                onClick={async () => {
                   const newStatuses = { ...paymentStatuses };
+                  const updates: Promise<void>[] = [];
+                  
                   selectedCoaches.forEach((coachName) => {
                     const statusKey = `${coachName}_${selectedMonth}`;
                     newStatuses[statusKey] = status;
+                    updates.push(updatePaymentStatus(statusKey, status));
                   });
+                  
                   setPaymentStatuses(newStatuses);
+                  
+                  // Spara alla till Firebase
+                  try {
+                    await Promise.all(updates);
+                  } catch (error) {
+                    console.error('Error saving payment statuses:', error);
+                    alert('Kunde inte spara utbetalningsstatusar. Försök igen.');
+                  }
+                  
                   setSelectedCoaches(new Set()); // Rensa markeringar efter ändring
                 }}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition hover:opacity-90 ${
@@ -640,12 +666,21 @@ export default function PersonalekonomiPage() {
                               return (
                                 <button
                                   key={status}
-                                  onClick={() => {
+                                  onClick={async () => {
                                     const statusKey = `${coach.coach}_${selectedMonth}`;
-                                    setPaymentStatuses({
+                                    const newStatuses = {
                                       ...paymentStatuses,
                                       [statusKey]: status,
-                                    });
+                                    };
+                                    setPaymentStatuses(newStatuses);
+                                    
+                                    // Spara till Firebase
+                                    try {
+                                      await updatePaymentStatus(statusKey, status);
+                                    } catch (error) {
+                                      console.error('Error saving payment status:', error);
+                                      alert('Kunde inte spara utbetalningsstatus. Försök igen.');
+                                    }
                                   }}
                                   className={`w-full text-left px-4 py-2 text-xs hover:bg-gray-50 flex items-center gap-2 ${
                                     status === 'Ej aktuell' ? 'text-red-600 font-medium' : 'text-gray-700'

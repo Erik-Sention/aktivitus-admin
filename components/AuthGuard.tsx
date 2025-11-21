@@ -20,6 +20,7 @@ const routePermissions: Record<string, UserRole[]> = {
   '/intakter': ['admin', 'platschef'],
   '/rapporter': ['admin', 'platschef'],
   '/coacher': ['admin'],
+  '/tjanster': ['admin'],
   '/installningar': ['admin'],
   '/loggar': ['admin'],
 };

@@ -82,8 +82,23 @@ export const TIME_BUDGETS: Record<string, number> = {
 };
 
 // Hjälpfunktion för att få tidsbudget för en tjänst
-export const getTimeBudget = (service: ServiceType, isSeniorCoach?: boolean): number => {
-  // Hantera senior coach memberships (Premium Senior och Supreme Senior)
+// Försök hämta från Firebase först, sedan fallback till hårdkodade värden
+export const getTimeBudget = (service: ServiceType, isSeniorCoach?: boolean, serviceFromFirebase?: { timeBudget?: number }): number => {
+  // Om tjänst från Firebase har tidsbudget, använd den
+  if (serviceFromFirebase?.timeBudget !== undefined) {
+    // Hantera senior coach memberships (Premium Senior och Supreme Senior)
+    if (isSeniorCoach) {
+      if (service === 'Membership Premium' || service === 'Membership Premium TRI/OCR/MULTI') {
+        return serviceFromFirebase.timeBudget * 1.4; // Premium Senior är 40% mer tid
+      }
+      if (service === 'Membership Supreme' || service === 'Membership Supreme TRI/OCR/MULTI') {
+        return serviceFromFirebase.timeBudget * 1.2; // Supreme Senior är 20% mer tid
+      }
+    }
+    return serviceFromFirebase.timeBudget;
+  }
+
+  // Hantera senior coach memberships (Premium Senior och Supreme Senior) - fallback till hårdkodade värden
   if (isSeniorCoach) {
     if (service === 'Membership Premium' || service === 'Membership Premium TRI/OCR/MULTI') {
       return 3.5; // Premium Senior per månad
@@ -93,7 +108,7 @@ export const getTimeBudget = (service: ServiceType, isSeniorCoach?: boolean): nu
     }
   }
 
-  // Standard lookup
+  // Standard lookup från hårdkodade värden
   return TIME_BUDGETS[service] || 0;
 };
 

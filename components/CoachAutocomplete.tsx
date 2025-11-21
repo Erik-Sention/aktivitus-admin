@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { COACHES } from '@/lib/constants';
+import { getAllCoachesSync, getAllCoaches } from '@/lib/coachMapping';
 
 interface CoachAutocompleteProps {
   value: string;
@@ -20,8 +20,26 @@ export default function CoachAutocomplete({
 }: CoachAutocompleteProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filteredCoaches, setFilteredCoaches] = useState<string[]>([]);
+  const [coaches, setCoaches] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Ladda coacher från Firebase
+  useEffect(() => {
+    const loadCoaches = async () => {
+      // Försök hämta från cache först
+      const cachedCoaches = getAllCoachesSync();
+      if (cachedCoaches.length > 0) {
+        setCoaches(cachedCoaches);
+      } else {
+        // Hämta från Firebase
+        const firebaseCoaches = await getAllCoaches();
+        setCoaches(firebaseCoaches);
+      }
+    };
+    
+    loadCoaches();
+  }, []);
 
   useEffect(() => {
     if (value.length === 0) {
@@ -30,13 +48,13 @@ export default function CoachAutocomplete({
       return;
     }
 
-    const filtered = COACHES.filter((coach) =>
+    const filtered = coaches.filter((coach) =>
       coach.toLowerCase().includes(value.toLowerCase())
     );
 
     setFilteredCoaches(filtered);
     setIsOpen(filtered.length > 0 && value.length > 0);
-  }, [value]);
+  }, [value, coaches]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

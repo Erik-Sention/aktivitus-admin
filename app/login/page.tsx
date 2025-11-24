@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { login } from '@/lib/auth';
 import Image from 'next/image';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -95,7 +97,7 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="erik"
+                placeholder="Ange din e-postadress"
                 required
                 className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0C3B5C] focus:border-[#0C3B5C] outline-none transition-all text-gray-900 bg-white placeholder:text-gray-400"
                 disabled={loading}
@@ -106,16 +108,31 @@ export default function LoginPage() {
               <label htmlFor="password" className="block text-sm font-medium text-gray-900 mb-2">
                 Lösenord
               </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="test1234"
-                required
-                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0C3B5C] focus:border-[#0C3B5C] outline-none transition-all text-gray-900 bg-white placeholder:text-gray-400"
-                disabled={loading}
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Ange ditt lösenord"
+                  required
+                  className="w-full px-4 py-3 pr-12 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0C3B5C] focus:border-[#0C3B5C] outline-none transition-all text-gray-900 bg-white placeholder:text-gray-400"
+                  disabled={loading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none focus:text-gray-700 transition-colors"
+                  disabled={loading}
+                  aria-label={showPassword ? 'Dölj lösenord' : 'Visa lösenord'}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
             </div>
 
             <button
@@ -126,13 +143,6 @@ export default function LoginPage() {
               {loading ? 'Loggar in...' : 'Logga in'}
             </button>
           </form>
-
-          {/* Info-text */}
-          <p className="mt-6 text-center text-sm text-gray-500">
-            {process.env.NEXT_PUBLIC_MOCK_USERNAME 
-              ? `Lokal testning - Användarnamn: ${process.env.NEXT_PUBLIC_MOCK_USERNAME || 'erik'}`
-              : 'Säker inloggning med Firebase Authentication'}
-          </p>
         </div>
       </div>
     </div>

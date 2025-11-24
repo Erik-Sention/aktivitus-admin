@@ -1081,13 +1081,81 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {/* Results Count - visa för admin, dölj för coacher och platschefer */}
+      {/* Results Count och Insights - visa för admin, dölj för coacher och platschefer */}
       {userRole === 'admin' && (
         <div className="flex-shrink-0 mb-4">
-          <p className="text-sm text-gray-600">
-            Visar <span className="font-semibold text-gray-900">{filteredAndSortedCustomers.length}</span> av{' '}
-            <span className="font-semibold text-gray-900">{customers.length}</span> kunder
-          </p>
+          <div className="flex items-center gap-4 mb-3">
+            <p className="text-sm text-gray-600">
+              Visar <span className="font-semibold text-gray-900">{filteredAndSortedCustomers.length}</span> av{' '}
+              <span className="font-semibold text-gray-900">{customers.length}</span> kunder
+            </p>
+          </div>
+          
+          {/* Insights */}
+          {filteredAndSortedCustomers.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              {(() => {
+                // Beräkna genomsnittlig aktiva månader
+                const activeMonths = filteredAndSortedCustomers
+                  .map(c => getMembershipDuration(c))
+                  .filter(d => d !== null) as number[];
+                const avgActiveMonths = activeMonths.length > 0
+                  ? Math.round(activeMonths.reduce((a, b) => a + b, 0) / activeMonths.length * 10) / 10
+                  : 0;
+
+                // Beräkna genomsnittligt pris
+                const prices = filteredAndSortedCustomers
+                  .map(c => c.price)
+                  .filter(p => p > 0);
+                const avgPrice = prices.length > 0
+                  ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length)
+                  : 0;
+
+                // Beräkna total omsättning
+                const totalRevenue = filteredAndSortedCustomers.reduce((sum, c) => sum + getTotalRevenue(c), 0);
+
+                // Beräkna genomsnittlig total omsättning per kund
+                const avgRevenue = filteredAndSortedCustomers.length > 0
+                  ? Math.round(totalRevenue / filteredAndSortedCustomers.length)
+                  : 0;
+
+                // Räkna aktiva kunder
+                const activeCustomers = filteredAndSortedCustomers.filter(c => c.status === 'Aktiv').length;
+
+                // Räkna kunder med aktivt medlemskap
+                const customersWithMembership = filteredAndSortedCustomers.filter(c => hasActiveMembership(c)).length;
+
+                return (
+                  <>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Genomsnitt aktiva månader</p>
+                      <p className="text-lg font-semibold text-gray-900">{avgActiveMonths.toFixed(1)}</p>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Genomsnittligt pris</p>
+                      <p className="text-lg font-semibold text-gray-900">{avgPrice.toLocaleString('sv-SE')} kr</p>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Total omsättning</p>
+                      <p className="text-lg font-semibold text-gray-900">{totalRevenue.toLocaleString('sv-SE')} kr</p>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Genomsnitt omsättning/kund</p>
+                      <p className="text-lg font-semibold text-gray-900">{avgRevenue.toLocaleString('sv-SE')} kr</p>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Aktiva kunder</p>
+                      <p className="text-lg font-semibold text-gray-900">{activeCustomers}</p>
+                    </div>
+                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+                      <p className="text-xs text-gray-500 mb-1">Med aktivt medlemskap</p>
+                      <p className="text-lg font-semibold text-gray-900">{customersWithMembership}</p>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 

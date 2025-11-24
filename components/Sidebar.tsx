@@ -163,7 +163,7 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-64 bg-[#0C3B5C] text-white flex flex-col shadow-xl">
+    <aside className="fixed left-0 top-0 h-screen w-64 bg-[#0C3B5C] text-white flex flex-col shadow-xl z-50">
       {/* Logo/Header */}
       <div className="p-6 border-b border-[#1E5A7D]">
         <h1 className="text-2xl font-bold text-white">Aktivitus</h1>

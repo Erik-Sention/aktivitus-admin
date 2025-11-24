@@ -12,6 +12,7 @@ export const PLACES: Place[] = [
 ];
 
 export const SPORTS: Sport[] = [
+  'Ingen',
   'Löpning',
   'Cykel',
   'Triathlon',

@@ -24,7 +24,11 @@
 }
 
 body {
-  background: var(--background);
+  background: #EFF6FF;
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+html {
+  background: #EFF6FF;
 }

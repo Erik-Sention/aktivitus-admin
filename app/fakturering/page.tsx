@@ -58,9 +58,10 @@ export default function InvoicingPage() {
     setSelectedMonth(new Date().toISOString().slice(0, 7));
   };
 
-  // Automatisk uppdatering av förfallna fakturor
+  // Automatisk uppdatering av förfallna fakturor (för aktuell månad)
   useEffect(() => {
     const today = new Date();
+    const currentMonth = today.toISOString().slice(0, 7); // YYYY-MM
     let hasUpdates = false;
 
     customers.forEach((customer) => {
@@ -71,11 +72,23 @@ export default function InvoicingPage() {
           service.status === 'Aktiv' &&
           isMembershipService(service.service) &&
           service.nextInvoiceDate &&
-          isBefore(new Date(service.nextInvoiceDate), today) &&
-          service.invoiceStatus === 'Väntar på betalning'
+          isBefore(new Date(service.nextInvoiceDate), today)
         ) {
-          hasUpdates = true;
-          return { ...service, invoiceStatus: 'Förfallen' as const };
+          // Kolla status för aktuell månad från invoiceHistory
+          const currentMonthStatus = service.invoiceHistory?.[currentMonth] || service.invoiceStatus;
+          
+          // Uppdatera bara om statusen för aktuell månad är "Väntar på betalning"
+          if (currentMonthStatus === 'Väntar på betalning') {
+            hasUpdates = true;
+            const invoiceHistory = { ...(service.invoiceHistory || {}) };
+            invoiceHistory[currentMonth] = 'Förfallen';
+            
+            return {
+              ...service,
+              invoiceHistory: invoiceHistory,
+              invoiceStatus: 'Förfallen' as const, // För bakåtkompatibilitet
+            };
+          }
         }
         return service;
       });
@@ -109,10 +122,19 @@ export default function InvoicingPage() {
         // Tjänsten ska överlappa med vald månad
         return serviceStart <= monthEnd && serviceEnd >= monthStart;
       })
-      .map((service) => ({
-        ...service,
-        customer,
-      }));
+      .map((service) => {
+        // Hämta status för vald månad från invoiceHistory
+        // Om ingen specifik status finns för denna månad, använd standardstatusen "Väntar på betalning"
+        // (inte invoiceStatus som kan vara från en annan månad)
+        const monthStatus = service.invoiceHistory?.[selectedMonth] || 'Väntar på betalning';
+        
+        return {
+          ...service,
+          customer,
+          // Överskriv invoiceStatus med månadsvis status för visning
+          invoiceStatus: monthStatus,
+        };
+      });
   });
 
   // Filtrera baserat på betalningsmetod, status och plats
@@ -230,14 +252,14 @@ export default function InvoicingPage() {
     }
   };
 
-  // Generisk funktion för att sätta faktureringsstatus
+  // Generisk funktion för att sätta faktureringsstatus (för vald månad)
   const handleSetStatus = async (customerId: string, serviceId: string, newStatus: InvoiceStatus) => {
     const customer = customers.find((c) => c.id === customerId);
     
     // Logga faktureringsuppdatering
     if (customer) {
       import('@/lib/activityLogger').then(({ logInvoiceUpdate }) => {
-        logInvoiceUpdate(customerId, customer.name, `Status ändrad till ${newStatus}`);
+        logInvoiceUpdate(customerId, customer.name, `Status ändrad till ${newStatus} för ${selectedMonth}`);
       });
     }
     
@@ -248,22 +270,56 @@ export default function InvoicingPage() {
       
       const updatedHistory = customer.serviceHistory.map((service) => {
         if (service.id === serviceId) {
+          // Skapa eller uppdatera månadsvis faktureringshistorik
+          // VIKTIGT: Varje månad har sin egen status - ändra INTE tidigare månader
+          // Vi kopierar hela historiken och uppdaterar BARA den valda månaden
+          const invoiceHistory = { ...(service.invoiceHistory || {}) };
+          invoiceHistory[selectedMonth] = newStatus;
+          
+          // Bestäm vilken invoiceStatus som ska visas som standard (för bakåtkompatibilitet)
+          // Använd den senaste månaden som har en status
+          let defaultInvoiceStatus = service.invoiceStatus || 'Väntar på betalning';
+          
+          // Hitta den senaste månaden med en status
+          const monthsWithStatus = Object.keys(invoiceHistory).sort().reverse();
+          if (monthsWithStatus.length > 0) {
+            const latestMonth = monthsWithStatus[0];
+            defaultInvoiceStatus = invoiceHistory[latestMonth];
+          } else {
+            // Om ingen historik finns, använd den nya statusen
+            defaultInvoiceStatus = newStatus;
+          }
+          
           const update: any = {
             ...service,
-            invoiceStatus: newStatus,
+            invoiceHistory: invoiceHistory,
+            // Behåll invoiceStatus för bakåtkompatibilitet - använd den senaste månaden med status
+            // Men detta påverkar INTE visningen eftersom vi använder invoiceHistory[selectedMonth] för visning
+            invoiceStatus: defaultInvoiceStatus,
           };
           
           // Om statusen inte är "Betald" eller "Ej aktuell", lägg till notering
           if (newStatus !== 'Betald' && newStatus !== 'Ej aktuell' && newStatus !== 'Väntar på betalning') {
             update.invoiceNote = currentNote 
-              ? `${currentNote}\n[${timestamp}] ${newStatus}` 
-              : `[${timestamp}] ${newStatus}`;
+              ? `${currentNote}\n[${timestamp}] ${selectedMonth}: ${newStatus}` 
+              : `[${timestamp}] ${selectedMonth}: ${newStatus}`;
           }
           
-          // Om status är "Betald", uppdatera nästa faktureringsdatum
+          // Om status är "Betald" för vald månad, uppdatera nästa faktureringsdatum
+          // Men bara om vald månad är den senaste månaden med faktura eller senare
           if (newStatus === 'Betald') {
-            const nextMonth = addMonths(today, 1);
-            update.nextInvoiceDate = nextMonth;
+            const [year, month] = selectedMonth.split('-').map(Number);
+            const selectedMonthDate = new Date(year, month - 1, 1);
+            const nextMonth = addMonths(selectedMonthDate, 1);
+            
+            // Uppdatera nästa faktureringsdatum om:
+            // 1. Det inte finns något nästa faktureringsdatum, eller
+            // 2. Vald månad är samma eller senare än månaden för nästa faktureringsdatum
+            if (!service.nextInvoiceDate || 
+                isAfter(selectedMonthDate, new Date(service.nextInvoiceDate)) ||
+                format(new Date(service.nextInvoiceDate), 'yyyy-MM') === selectedMonth) {
+              update.nextInvoiceDate = nextMonth;
+            }
           }
           
           return update;
@@ -597,7 +653,7 @@ export default function InvoicingPage() {
 
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
               <tr>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider w-12">
                   <input

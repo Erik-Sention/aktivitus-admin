@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import { useCustomers } from '@/lib/CustomerContext';
-import { Search, Filter, Download, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, X } from 'lucide-react';
-import { SERVICE_COLORS, isMembershipService, PLACES, SERVICES } from '@/lib/constants';
+import { Search, Filter, Download, ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, X, Settings, CheckSquare, Square } from 'lucide-react';
+import { SERVICE_COLORS, isMembershipService, PLACES, SERVICES, COACHES, SPORTS, INVOICE_STATUSES, PAYMENT_METHODS } from '@/lib/constants';
 import { format } from 'date-fns';
 import { sv } from 'date-fns/locale';
 import Link from 'next/link';
@@ -12,21 +12,72 @@ import { Customer } from '@/types';
 import { getUserRoleSync, getCurrentUser } from '@/lib/auth';
 import { logPageView, logCustomerView } from '@/lib/activityLogger';
 
-type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'totalRevenue';
+type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'totalRevenue' | 'coach' | 'phone' | 'invoiceStatus' | 'paymentMethod' | 'nextInvoice';
 type SortDirection = 'asc' | 'desc';
+
+type ColumnKey = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'price' | 'totalRevenue' | 'date' | 'coach' | 'phone' | 'invoiceStatus' | 'paymentMethod' | 'nextInvoice';
 
 export default function CustomersPage() {
   const { customers } = useCustomers();
   const [searchFirstName, setSearchFirstName] = useState('');
   const [searchLastName, setSearchLastName] = useState('');
   const [searchEmail, setSearchEmail] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('Alla');
   const [selectedPlace, setSelectedPlace] = useState<string>('Alla');
   const [selectedService, setSelectedService] = useState<string>('Alla');
+  const [selectedSport, setSelectedSport] = useState<string>('Alla');
+  const [selectedCoach, setSelectedCoach] = useState<string>('Alla');
+  const [selectedInvoiceStatus, setSelectedInvoiceStatus] = useState<string>('Alla');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<string>('Alla');
   const [sortField, setSortField] = useState<SortField>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [userRole, setUserRole] = useState<string>('admin');
   const [userEmail, setUserEmail] = useState<string>('');
+  const [showColumnSettings, setShowColumnSettings] = useState(false);
+  const [showFilterSettings, setShowFilterSettings] = useState(false);
+  
+  // Inga filter visas som standard - användaren väljer själv
+  const defaultFilters: string[] = [];
+  
+  // Alla tillgängliga filter - börjar tomt, användaren väljer vilka som ska visas
+  const [visibleFilters, setVisibleFilters] = useState<Set<string>>(new Set());
+  
+  const allFilters: { key: string; label: string }[] = [
+    { key: 'status', label: 'Status' },
+    { key: 'place', label: 'Ort' },
+    { key: 'service', label: 'Tjänst' },
+    { key: 'sport', label: 'Gren' },
+    { key: 'coach', label: 'Coach' },
+    { key: 'invoiceStatus', label: 'Faktureringsstatus' },
+    { key: 'paymentMethod', label: 'Betalningsmetod' },
+  ];
+  
+  // Standardkolumner som alltid visas (alla som fanns i tabellen från början)
+  const defaultColumns: ColumnKey[] = ['name', 'email', 'place', 'sport', 'service', 'status', 'serviceCount', 'membershipDuration', 'totalMonthsFromStart', 'price', 'totalRevenue', 'date'];
+  
+  // Alla tillgängliga kolumner
+  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(new Set(defaultColumns));
+  
+  const allColumns: { key: ColumnKey; label: string }[] = [
+    { key: 'name', label: 'Namn' },
+    { key: 'email', label: 'E-post' },
+    { key: 'phone', label: 'Telefonnummer' },
+    { key: 'place', label: 'Ort' },
+    { key: 'coach', label: 'Coach' },
+    { key: 'sport', label: 'Gren' },
+    { key: 'service', label: 'Tjänst' },
+    { key: 'status', label: 'Status' },
+    { key: 'invoiceStatus', label: 'Faktureringsstatus' },
+    { key: 'paymentMethod', label: 'Betalningsmetod' },
+    { key: 'nextInvoice', label: 'Nästa faktura' },
+    { key: 'serviceCount', label: 'Antal tjänster' },
+    { key: 'membershipDuration', label: 'Aktiva månader' },
+    { key: 'totalMonthsFromStart', label: 'Månader från start' },
+    { key: 'price', label: 'Pris' },
+    { key: 'totalRevenue', label: 'Total omsättning' },
+    { key: 'date', label: 'Startdatum' },
+  ];
   
   // Logga sidvisning
   useEffect(() => {
@@ -136,6 +187,57 @@ export default function CustomersPage() {
     }
     
     return customer.service;
+  };
+
+  // Funktion för att hämta faktureringsstatus från aktivt medlemskap
+  const getInvoiceStatus = (customer: Customer): string => {
+    if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
+      return '-';
+    }
+    
+    const activeService = customer.serviceHistory.find(
+      (entry) => entry.status === 'Aktiv' && isMembershipService(entry.service)
+    );
+    
+    if (activeService) {
+      return activeService.invoiceStatus || 'Väntar på betalning';
+    }
+    
+    return '-';
+  };
+
+  // Funktion för att hämta betalningsmetod från aktivt medlemskap
+  const getPaymentMethod = (customer: Customer): string => {
+    if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
+      return '-';
+    }
+    
+    const activeService = customer.serviceHistory.find(
+      (entry) => entry.status === 'Aktiv' && isMembershipService(entry.service)
+    );
+    
+    if (activeService && activeService.paymentMethod) {
+      return activeService.paymentMethod;
+    }
+    
+    return '-';
+  };
+
+  // Funktion för att hämta nästa faktureringsdatum från aktivt medlemskap
+  const getNextInvoiceDate = (customer: Customer): Date | null => {
+    if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
+      return null;
+    }
+    
+    const activeService = customer.serviceHistory.find(
+      (entry) => entry.status === 'Aktiv' && isMembershipService(entry.service)
+    );
+    
+    if (activeService && activeService.nextInvoiceDate) {
+      return new Date(activeService.nextInvoiceDate);
+    }
+    
+    return null;
   };
 
   // Funktion för att räkna medlemstid i månader - endast aktiva perioder
@@ -369,47 +471,72 @@ export default function CustomersPage() {
         }
       } else {
         // För admin: normal sökning
-        const nameParts = customer.name.trim().split(/\s+/);
-        const firstName = nameParts[0] || '';
-        const lastName = nameParts.slice(1).join(' ') || '';
-        
-        let matchesSearch = true;
-        
-        // Förnamn: måste börja med söktermen (case-insensitive)
-        if (searchFirstName.trim().length >= 2) {
-          matchesSearch = matchesSearch && firstName.toLowerCase().startsWith(searchFirstName.toLowerCase());
-        }
-        
-        // Efternamn: måste börja med söktermen (case-insensitive)
-        if (searchLastName.trim().length >= 2) {
-          matchesSearch = matchesSearch && lastName.toLowerCase().startsWith(searchLastName.toLowerCase());
-        }
-        
-        // E-post: måste börja med söktermen (case-insensitive)
-        if (searchEmail.trim().length >= 2) {
-          matchesSearch = matchesSearch && customer.email.toLowerCase().startsWith(searchEmail.toLowerCase());
-        }
-        
-        // Om ingen sökning gjorts (admin), visa alla
-        if (searchFirstName.trim().length === 0 && searchLastName.trim().length === 0 && searchEmail.trim().length === 0) {
-          matchesSearch = true;
-        }
-        
-        if (!matchesSearch) {
-          return false;
+        // Om searchQuery används (nytt enkelt sökfält), använd det
+        if (searchQuery.trim().length > 0) {
+          const query = searchQuery.toLowerCase().trim();
+          const nameMatch = customer.name.toLowerCase().includes(query);
+          const emailMatch = customer.email.toLowerCase().includes(query);
+          
+          if (!nameMatch && !emailMatch) {
+            return false;
+          }
+        } else {
+          // Bakåtkompatibilitet med gamla sökfälten
+          const nameParts = customer.name.trim().split(/\s+/);
+          const firstName = nameParts[0] || '';
+          const lastName = nameParts.slice(1).join(' ') || '';
+          
+          let matchesSearch = true;
+          
+          // Förnamn: måste börja med söktermen (case-insensitive)
+          if (searchFirstName.trim().length >= 2) {
+            matchesSearch = matchesSearch && firstName.toLowerCase().startsWith(searchFirstName.toLowerCase());
+          }
+          
+          // Efternamn: måste börja med söktermen (case-insensitive)
+          if (searchLastName.trim().length >= 2) {
+            matchesSearch = matchesSearch && lastName.toLowerCase().startsWith(searchLastName.toLowerCase());
+          }
+          
+          // E-post: måste börja med söktermen (case-insensitive)
+          if (searchEmail.trim().length >= 2) {
+            matchesSearch = matchesSearch && customer.email.toLowerCase().startsWith(searchEmail.toLowerCase());
+          }
+          
+          // Om ingen sökning gjorts (admin), visa alla
+          if (searchFirstName.trim().length === 0 && searchLastName.trim().length === 0 && searchEmail.trim().length === 0) {
+            matchesSearch = true;
+          }
+          
+          if (!matchesSearch) {
+            return false;
+          }
         }
       }
 
+      // Bara applicera filter om de är valda att visas
       const matchesStatus =
-        selectedStatus === 'Alla' || customer.status === selectedStatus;
+        !visibleFilters.has('status') || selectedStatus === 'Alla' || customer.status === selectedStatus;
 
       const matchesPlace =
-        selectedPlace === 'Alla' || customer.place === selectedPlace;
+        !visibleFilters.has('place') || selectedPlace === 'Alla' || customer.place === selectedPlace;
 
       const matchesService =
-        selectedService === 'Alla' || getPriorityService(customer) === selectedService;
+        !visibleFilters.has('service') || selectedService === 'Alla' || getPriorityService(customer) === selectedService;
 
-      return matchesStatus && matchesPlace && matchesService;
+      const matchesSport =
+        !visibleFilters.has('sport') || selectedSport === 'Alla' || customer.sport === selectedSport;
+
+      const matchesCoach =
+        !visibleFilters.has('coach') || selectedCoach === 'Alla' || customer.coach === selectedCoach;
+
+      const matchesInvoiceStatus =
+        !visibleFilters.has('invoiceStatus') || selectedInvoiceStatus === 'Alla' || getInvoiceStatus(customer) === selectedInvoiceStatus || getInvoiceStatus(customer) === '-';
+
+      const matchesPaymentMethod =
+        !visibleFilters.has('paymentMethod') || selectedPaymentMethod === 'Alla' || getPaymentMethod(customer) === selectedPaymentMethod || getPaymentMethod(customer) === '-';
+
+      return matchesStatus && matchesPlace && matchesService && matchesSport && matchesCoach && matchesInvoiceStatus && matchesPaymentMethod;
     })
     .sort((a, b) => {
       let aValue: any;
@@ -464,6 +591,28 @@ export default function CustomersPage() {
           aValue = getTotalRevenue(a);
           bValue = getTotalRevenue(b);
           break;
+        case 'coach':
+          aValue = a.coach || '';
+          bValue = b.coach || '';
+          break;
+        case 'phone':
+          aValue = a.phone || '';
+          bValue = b.phone || '';
+          break;
+        case 'invoiceStatus':
+          aValue = getInvoiceStatus(a);
+          bValue = getInvoiceStatus(b);
+          break;
+        case 'paymentMethod':
+          aValue = getPaymentMethod(a);
+          bValue = getPaymentMethod(b);
+          break;
+        case 'nextInvoice':
+          const aNextInvoice = getNextInvoiceDate(a);
+          const bNextInvoice = getNextInvoiceDate(b);
+          aValue = aNextInvoice ? aNextInvoice.getTime() : 0;
+          bValue = bNextInvoice ? bNextInvoice.getTime() : 0;
+          break;
         default:
           return 0;
       }
@@ -474,11 +623,11 @@ export default function CustomersPage() {
     });
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
+    <div className="min-h-screen flex flex-col bg-blue-50 w-full">
       <Header title="Kunder" subtitle="Hantera alla dina kunder" />
 
       {/* Action Bar */}
-      <div className="flex-shrink-0 mb-4 flex flex-col gap-4 px-8">
+      <div className="flex-shrink-0 mb-4 flex flex-col gap-4">
         {/* Search Fields */}
         {requiresSearch ? (
           <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -549,35 +698,27 @@ export default function CustomersPage() {
               <input
                 type="text"
                 placeholder="Sök efter namn eller e-post..."
-                value={`${searchFirstName} ${searchLastName} ${searchEmail}`.trim()}
+                value={searchQuery}
                 onChange={(e) => {
-                  const value = e.target.value;
-                  // Försök dela upp i förnamn och efternamn
-                  const parts = value.trim().split(/\s+/);
-                  if (parts.length > 1) {
-                    setSearchFirstName(parts[0]);
-                    setSearchLastName(parts.slice(1).join(' '));
-                    setSearchEmail('');
-                  } else if (value.includes('@')) {
-                    setSearchEmail(value);
+                  setSearchQuery(e.target.value);
+                  // Rensa gamla sökfält när man använder det nya
+                  if (e.target.value.length === 0) {
                     setSearchFirstName('');
-                    setSearchLastName('');
-                  } else {
-                    setSearchFirstName(value);
                     setSearchLastName('');
                     setSearchEmail('');
                   }
                 }}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
               />
-              {(searchFirstName || searchLastName || searchEmail) && (
+              {searchQuery && (
                 <button
                   onClick={() => {
+                    setSearchQuery('');
                     setSearchFirstName('');
                     setSearchLastName('');
                     setSearchEmail('');
                   }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition"
                   title="Rensa sökning"
                 >
                   <X className="w-4 h-4" />
@@ -588,62 +729,318 @@ export default function CustomersPage() {
         )}
 
         {/* Filters and Actions */}
-        <div className="flex gap-3 flex-wrap">
-          <select
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-          >
-            <option value="Alla">Alla statusar</option>
-            <option value="Aktiv">Aktiv</option>
-            <option value="Inaktiv">Inaktiv</option>
-            <option value="Pausad">Pausad</option>
-            <option value="Genomförd">Genomförd</option>
-          </select>
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-3 flex-wrap items-center">
+            <div className="flex items-center gap-2 text-sm text-gray-700 font-medium">
+              <Filter className="w-4 h-4" />
+              Filter:
+            </div>
+            {visibleFilters.has('status') && (
+              <select
+                value={selectedStatus}
+                onChange={(e) => setSelectedStatus(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla statusar</option>
+                <option value="Aktiv">Aktiv</option>
+                <option value="Inaktiv">Inaktiv</option>
+                <option value="Pausad">Pausad</option>
+                <option value="Genomförd">Genomförd</option>
+              </select>
+            )}
 
-          <select
-            value={selectedPlace}
-            onChange={(e) => setSelectedPlace(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-          >
-            <option value="Alla">Alla orter</option>
-            {PLACES.map((place) => (
-              <option key={place} value={place}>
-                {place}
-              </option>
-            ))}
-          </select>
+            {visibleFilters.has('place') && (
+              <select
+                value={selectedPlace}
+                onChange={(e) => setSelectedPlace(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla orter</option>
+                {PLACES.map((place) => (
+                  <option key={place} value={place}>
+                    {place}
+                  </option>
+                ))}
+              </select>
+            )}
 
-          <select
-            value={selectedService}
-            onChange={(e) => setSelectedService(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-          >
-            <option value="Alla">Alla tjänster</option>
-            {SERVICES.map((service) => (
-              <option key={service} value={service}>
-                {service}
-              </option>
-            ))}
-          </select>
+            {visibleFilters.has('service') && (
+              <select
+                value={selectedService}
+                onChange={(e) => setSelectedService(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla tjänster</option>
+                {SERVICES.map((service) => (
+                  <option key={service} value={service}>
+                    {service}
+                  </option>
+                ))}
+              </select>
+            )}
 
-          <button className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition text-gray-700">
-            <Download className="w-5 h-5" />
-            Exportera
-          </button>
+            {visibleFilters.has('sport') && (
+              <select
+                value={selectedSport}
+                onChange={(e) => setSelectedSport(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla grenar</option>
+                {SPORTS.map((sport) => (
+                  <option key={sport} value={sport}>
+                    {sport}
+                  </option>
+                ))}
+              </select>
+            )}
 
-          <Link
-            href="/ny-kund"
-            className="flex items-center gap-2 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition font-medium shadow-sm"
-          >
-            + Lägg till kund
-          </Link>
+            {visibleFilters.has('coach') && (
+              <select
+                value={selectedCoach}
+                onChange={(e) => setSelectedCoach(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla coacher</option>
+                {COACHES.map((coach) => (
+                  <option key={coach} value={coach}>
+                    {coach}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {visibleFilters.has('invoiceStatus') && (
+              <select
+                value={selectedInvoiceStatus}
+                onChange={(e) => setSelectedInvoiceStatus(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla faktureringsstatusar</option>
+                {INVOICE_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {visibleFilters.has('paymentMethod') && (
+              <select
+                value={selectedPaymentMethod}
+                onChange={(e) => setSelectedPaymentMethod(e.target.value)}
+                className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
+              >
+                <option value="Alla">Alla betalningsmetoder</option>
+                {PAYMENT_METHODS.map((method) => (
+                  <option key={method} value={method}>
+                    {method}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {(selectedStatus !== 'Alla' || selectedPlace !== 'Alla' || selectedService !== 'Alla' || selectedSport !== 'Alla' || selectedCoach !== 'Alla' || selectedInvoiceStatus !== 'Alla' || selectedPaymentMethod !== 'Alla') && (
+              <button
+                onClick={() => {
+                  setSelectedStatus('Alla');
+                  setSelectedPlace('Alla');
+                  setSelectedService('Alla');
+                  setSelectedSport('Alla');
+                  setSelectedCoach('Alla');
+                  setSelectedInvoiceStatus('Alla');
+                  setSelectedPaymentMethod('Alla');
+                }}
+                className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition"
+                title="Rensa alla filter"
+              >
+                <X className="w-4 h-4" />
+                Rensa filter
+              </button>
+            )}
+          </div>
+
+          <div className="flex gap-3 flex-wrap items-center">
+            <button
+              onClick={() => setShowFilterSettings(!showFilterSettings)}
+              className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition font-medium ${
+                showFilterSettings
+                  ? 'bg-[#1E5A7D] text-white border-[#1E5A7D] shadow-sm'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'
+              }`}
+              title="Välj filter"
+            >
+              <Filter className="w-5 h-5" />
+              Filter
+            </button>
+
+            <button
+              onClick={() => setShowColumnSettings(!showColumnSettings)}
+              className={`flex items-center gap-2 px-4 py-2 border rounded-lg transition font-medium ${
+                showColumnSettings
+                  ? 'bg-[#1E5A7D] text-white border-[#1E5A7D] shadow-sm'
+                  : 'border-gray-300 text-gray-700 hover:bg-gray-50 shadow-sm'
+              }`}
+              title="Välj kolumner"
+            >
+              <Settings className="w-5 h-5" />
+              Kolumner
+            </button>
+
+            <button className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition text-gray-700 shadow-sm">
+              <Download className="w-5 h-5" />
+              Exportera
+            </button>
+
+            <Link
+              href="/ny-kund"
+              className="flex items-center gap-2 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition font-medium shadow-sm"
+            >
+              + Lägg till kund
+            </Link>
+          </div>
         </div>
+
+        {/* Filterinställningar - Modal */}
+        {showFilterSettings && (
+          <div className="bg-white border border-gray-200 rounded-lg shadow-xl p-6 max-w-4xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Välj filter att visa</h3>
+                <p className="text-sm text-gray-500 mt-1">Välj vilka filter som ska visas i filterraden</p>
+              </div>
+              <button
+                onClick={() => setShowFilterSettings(false)}
+                className="text-gray-400 hover:text-gray-600 transition p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-96 overflow-y-auto pr-2">
+              {allFilters.map((filter) => {
+                const isVisible = visibleFilters.has(filter.key);
+                return (
+                  <label
+                    key={filter.key}
+                    className={`flex items-center gap-3 p-3 rounded-lg border transition cursor-pointer ${
+                      isVisible
+                        ? 'bg-blue-50 border-blue-200'
+                        : 'bg-white border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isVisible}
+                      onChange={(e) => {
+                        const newVisibleFilters = new Set(visibleFilters);
+                        if (e.target.checked) {
+                          newVisibleFilters.add(filter.key);
+                        } else {
+                          newVisibleFilters.delete(filter.key);
+                        }
+                        setVisibleFilters(newVisibleFilters);
+                      }}
+                      className="w-4 h-4 text-[#1E5A7D] border-gray-300 rounded focus:ring-[#1E5A7D] cursor-pointer"
+                    />
+                    <span className={`text-sm font-medium ${isVisible ? 'text-blue-900' : 'text-gray-700'}`}>
+                      {filter.label}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-4 pt-4 border-t border-gray-200 flex gap-2 justify-end">
+              <button
+                onClick={() => setVisibleFilters(new Set())}
+                className="px-4 py-2 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition border border-gray-300"
+              >
+                Rensa alla
+              </button>
+              <button
+                onClick={() => setVisibleFilters(new Set(allFilters.map(f => f.key)))}
+                className="px-4 py-2 text-sm bg-[#1E5A7D] text-white hover:bg-[#0C3B5C] rounded-lg transition font-medium"
+              >
+                Visa alla filter
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Kolumninställningar - Förbättrad modal */}
+        {showColumnSettings && (
+          <div className="bg-white border border-gray-200 rounded-lg shadow-xl p-6 max-w-4xl">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Välj kolumner att visa</h3>
+                <p className="text-sm text-gray-500 mt-1">Välj vilka kolumner som ska visas i tabellen</p>
+              </div>
+              <button
+                onClick={() => setShowColumnSettings(false)}
+                className="text-gray-400 hover:text-gray-600 transition p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 max-h-96 overflow-y-auto pr-2">
+              {allColumns.map((column) => {
+                const isVisible = visibleColumns.has(column.key);
+                const isDefault = defaultColumns.includes(column.key);
+                return (
+                  <label
+                    key={column.key}
+                    className={`flex items-center gap-3 p-3 rounded-lg border transition cursor-pointer ${
+                      isVisible
+                        ? 'bg-blue-50 border-blue-200'
+                        : 'bg-white border-gray-200 hover:bg-gray-50'
+                    } ${isDefault ? 'opacity-75' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isVisible}
+                      onChange={(e) => {
+                        const newVisibleColumns = new Set(visibleColumns);
+                        if (e.target.checked) {
+                          newVisibleColumns.add(column.key);
+                        } else if (!isDefault) {
+                          newVisibleColumns.delete(column.key);
+                        }
+                        setVisibleColumns(newVisibleColumns);
+                      }}
+                      disabled={isDefault}
+                      className="w-4 h-4 text-[#1E5A7D] border-gray-300 rounded focus:ring-[#1E5A7D] cursor-pointer disabled:opacity-50"
+                    />
+                    <span className={`text-sm font-medium ${isVisible ? 'text-blue-900' : 'text-gray-700'}`}>
+                      {column.label}
+                    </span>
+                    {isDefault && (
+                      <span className="ml-auto text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded">
+                        Standard
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-4 pt-4 border-t border-gray-200 flex gap-2 justify-end">
+              <button
+                onClick={() => setVisibleColumns(new Set(defaultColumns))}
+                className="px-4 py-2 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition border border-gray-300"
+              >
+                Återställ till standard
+              </button>
+              <button
+                onClick={() => setVisibleColumns(new Set(allColumns.map(c => c.key)))}
+                className="px-4 py-2 text-sm bg-[#1E5A7D] text-white hover:bg-[#0C3B5C] rounded-lg transition font-medium"
+              >
+                Visa alla kolumner
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Info för coacher/platschefer */}
       {requiresSearch && (
-        <div className="mb-4 px-8">
+        <div className="mb-4">
           {!hasSearchTerm && hasOwnCustomers ? (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -686,7 +1083,7 @@ export default function CustomersPage() {
 
       {/* Results Count - visa för admin, dölj för coacher och platschefer */}
       {userRole === 'admin' && (
-        <div className="flex-shrink-0 mb-4 px-8">
+        <div className="flex-shrink-0 mb-4">
           <p className="text-sm text-gray-600">
             Visar <span className="font-semibold text-gray-900">{filteredAndSortedCustomers.length}</span> av{' '}
             <span className="font-semibold text-gray-900">{customers.length}</span> kunder
@@ -696,266 +1093,434 @@ export default function CustomersPage() {
 
       {/* Customers Table */}
       {(!requiresSearch || hasSearchTerm || hasOwnCustomers) && (
-        <div className="flex-1 overflow-hidden px-8 pb-8">
+        <div className="flex-1 overflow-hidden pb-8">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col overflow-hidden">
-            <div className="flex-1 overflow-auto">
-              <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <div className="flex-1 overflow-auto bg-blue-50">
+              <div className="overflow-x-auto bg-blue-50 min-h-full w-full">
+                <table className="min-w-max bg-white w-full">
+            <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
               <tr>
-                <th 
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('name')}
-                >
-                  <div className="flex items-center gap-1">
-                    Namn
-                    {sortField === 'name' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('email')}
-                >
-                  <div className="flex items-center gap-1">
-                    E-post
-                    {sortField === 'email' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('place')}
-                >
-                  <div className="flex items-center gap-1">
-                    Ort
-                    {sortField === 'place' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('sport')}
-                >
-                  <div className="flex items-center gap-1">
-                    Gren
-                    {sortField === 'sport' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('service')}
-                >
-                  <div className="flex items-center gap-1">
-                    Tjänst
-                    {sortField === 'service' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('status')}
-                >
-                  <div className="flex items-center gap-1">
-                    Status
-                    {sortField === 'status' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('serviceCount')}
-                >
-                  <div className="flex items-center gap-1">
-                    Antal
-                    {sortField === 'serviceCount' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('membershipDuration')}
-                >
-                  <div className="flex items-center gap-1">
-                    Aktiva månader
-                    {sortField === 'membershipDuration' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('totalMonthsFromStart')}
-                >
-                  <div className="flex items-center gap-1">
-                    Månader från start
-                    {sortField === 'totalMonthsFromStart' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('price')}
-                >
-                  <div className="flex items-center gap-1">
-                    Pris
-                    {sortField === 'price' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('totalRevenue')}
-                >
-                  <div className="flex items-center gap-1">
-                    Total omsättning
-                    {sortField === 'totalRevenue' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
-                <th 
-                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                  onClick={() => handleSort('date')}
-                >
-                  <div className="flex items-center gap-1">
-                    Startdatum
-                    {sortField === 'date' ? (
-                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                    ) : (
-                      <ArrowUpDown className="w-3 h-3 opacity-30" />
-                    )}
-                  </div>
-                </th>
+                {visibleColumns.has('name') && (
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('name')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Namn
+                      {sortField === 'name' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('email') && (
+                  <th 
+                    className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('email')}
+                  >
+                    <div className="flex items-center gap-1">
+                      E-post
+                      {sortField === 'email' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('phone') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('phone')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Telefonnummer
+                      {sortField === 'phone' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('place') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('place')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Ort
+                      {sortField === 'place' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('coach') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('coach')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Coach
+                      {sortField === 'coach' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('sport') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('sport')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Gren
+                      {sortField === 'sport' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('service') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('service')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Tjänst
+                      {sortField === 'service' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('status') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('status')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Status
+                      {sortField === 'status' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('invoiceStatus') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('invoiceStatus')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Faktureringsstatus
+                      {sortField === 'invoiceStatus' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('paymentMethod') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('paymentMethod')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Betalningsmetod
+                      {sortField === 'paymentMethod' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('nextInvoice') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('nextInvoice')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Nästa faktura
+                      {sortField === 'nextInvoice' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('serviceCount') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('serviceCount')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Antal tjänster
+                      {sortField === 'serviceCount' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('membershipDuration') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('membershipDuration')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Aktiva månader
+                      {sortField === 'membershipDuration' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('totalMonthsFromStart') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('totalMonthsFromStart')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Månader från start
+                      {sortField === 'totalMonthsFromStart' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('price') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('price')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Pris
+                      {sortField === 'price' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('totalRevenue') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('totalRevenue')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Total omsättning
+                      {sortField === 'totalRevenue' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
+                {visibleColumns.has('date') && (
+                  <th 
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                    onClick={() => handleSort('date')}
+                  >
+                    <div className="flex items-center gap-1">
+                      Startdatum
+                      {sortField === 'date' ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                      ) : (
+                        <ArrowUpDown className="w-3 h-3 opacity-30" />
+                      )}
+                    </div>
+                  </th>
+                )}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-gray-200 min-w-full">
               {filteredAndSortedCustomers.map((customer) => {
                 const priorityService = getPriorityService(customer);
                 const serviceCount = getServiceCount(customer);
                 const membershipDuration = getMembershipDuration(customer);
+                const invoiceStatus = getInvoiceStatus(customer);
+                const paymentMethod = getPaymentMethod(customer);
+                const nextInvoiceDate = getNextInvoiceDate(customer);
                 
                 return (
                 <tr key={customer.id} className="hover:bg-gray-50 transition">
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <Link
-                      href={`/kunder/${customer.id}`}
-                      className="font-medium text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline text-sm cursor-pointer"
-                    >
-                      {customer.name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <Link
-                      href={`/kunder/${customer.id}`}
-                      className="text-sm text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline cursor-pointer"
-                    >
-                      {customer.email}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{customer.place}</div>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">{customer.sport}</div>
-                  </td>
-                  <td className="px-3 py-3">
-                    <span
-                      className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${
-                        SERVICE_COLORS[priorityService]
-                      } text-white w-fit`}
-                      title={priorityService}
-                    >
-                      {priorityService.length > 25 ? priorityService.substring(0, 25) + '...' : priorityService}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <span
-                      className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${getStatusColor(
-                        customer.status
-                      )}`}
-                    >
-                      {customer.status}
-                    </span>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900 font-medium">{serviceCount}</div>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    {membershipDuration !== null ? (
-                      <div className="text-sm text-gray-900 font-medium">
-                        {membershipDuration}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-400">-</div>
-                    )}
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    {(() => {
-                      const totalMonths = getTotalMonthsFromStart(customer);
-                      return totalMonths !== null ? (
-                        <div className="text-sm text-gray-900 font-medium">
-                          {totalMonths}
+                  {visibleColumns.has('name') && (
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <Link
+                        href={`/kunder/${customer.id}`}
+                        className="font-medium text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline text-sm cursor-pointer"
+                      >
+                        {customer.name}
+                      </Link>
+                    </td>
+                  )}
+                  {visibleColumns.has('email') && (
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <Link
+                        href={`/kunder/${customer.id}`}
+                        className="text-sm text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline cursor-pointer"
+                      >
+                        {customer.email}
+                      </Link>
+                    </td>
+                  )}
+                  {visibleColumns.has('phone') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{customer.phone || '-'}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('place') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{customer.place}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('coach') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{customer.coach || '-'}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('sport') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{customer.sport}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('service') && (
+                    <td className="px-3 py-3">
+                      <span
+                        className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${
+                          SERVICE_COLORS[priorityService]
+                        } text-white w-fit`}
+                        title={priorityService}
+                      >
+                        {priorityService.length > 25 ? priorityService.substring(0, 25) + '...' : priorityService}
+                      </span>
+                    </td>
+                  )}
+                  {visibleColumns.has('status') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${getStatusColor(
+                          customer.status
+                        )}`}
+                      >
+                        {customer.status}
+                      </span>
+                    </td>
+                  )}
+                  {visibleColumns.has('invoiceStatus') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <span
+                        className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${
+                          invoiceStatus === 'Betald' ? 'bg-green-100 text-green-800' :
+                          invoiceStatus === 'Väntar på betalning' ? 'bg-yellow-100 text-yellow-800' :
+                          invoiceStatus === 'Förfallen' ? 'bg-red-100 text-red-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {invoiceStatus}
+                      </span>
+                    </td>
+                  )}
+                  {visibleColumns.has('paymentMethod') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{paymentMethod}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('nextInvoice') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {nextInvoiceDate ? (
+                        <div className="text-sm text-gray-600">
+                          {format(nextInvoiceDate, 'd MMM yyyy', { locale: sv })}
                         </div>
                       ) : (
                         <div className="text-sm text-gray-400">-</div>
-                      );
-                    })()}
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900">
-                      {customer.price}
-                      <span className="text-xs text-gray-500 ml-0.5">
-                        {isMembershipService(customer.service) ? '/mån' : 'kr'}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-900 font-semibold">
-                      {getTotalRevenue(customer).toLocaleString('sv-SE')} kr
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 whitespace-nowrap">
-                    <div className="text-sm text-gray-600">
-                      {format(new Date(customer.date), 'yyyy-MM-dd', { locale: sv })}
-                    </div>
-                  </td>
+                      )}
+                    </td>
+                  )}
+                  {visibleColumns.has('serviceCount') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900 font-medium">{serviceCount}</div>
+                    </td>
+                  )}
+                  {visibleColumns.has('membershipDuration') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {membershipDuration !== null ? (
+                        <div className="text-sm text-gray-900 font-medium">
+                          {membershipDuration}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-gray-400">-</div>
+                      )}
+                    </td>
+                  )}
+                  {visibleColumns.has('totalMonthsFromStart') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      {(() => {
+                        const totalMonths = getTotalMonthsFromStart(customer);
+                        return totalMonths !== null ? (
+                          <div className="text-sm text-gray-900 font-medium">
+                            {totalMonths}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400">-</div>
+                        );
+                      })()}
+                    </td>
+                  )}
+                  {visibleColumns.has('price') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {customer.price}
+                        <span className="text-xs text-gray-500 ml-0.5">
+                          {isMembershipService(customer.service) ? '/mån' : 'kr'}
+                        </span>
+                      </div>
+                    </td>
+                  )}
+                  {visibleColumns.has('totalRevenue') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-900 font-semibold">
+                        {getTotalRevenue(customer).toLocaleString('sv-SE')} kr
+                      </div>
+                    </td>
+                  )}
+                  {visibleColumns.has('date') && (
+                    <td className="px-3 py-3 whitespace-nowrap">
+                      <div className="text-sm text-gray-600">
+                        {format(new Date(customer.date), 'yyyy-MM-dd', { locale: sv })}
+                      </div>
+                    </td>
+                  )}
                 </tr>
               );
               })}
             </tbody>
           </table>
+              </div>
 
               {filteredAndSortedCustomers.length === 0 && hasSearchTerm && (
                 <div className="text-center py-12">

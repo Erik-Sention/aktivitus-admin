@@ -51,6 +51,7 @@ export type BillingInterval =
   | 'Engångsbetalning';
 
 export type Sport = 
+  | 'Ingen'
   | 'Löpning'
   | 'Cykel'
   | 'Triathlon'
@@ -151,7 +152,8 @@ export interface ServiceEntry {
   coachHistory?: CoachChange[]; // Historik över coach-byten med datum
   // Betalningsinformation per tjänst
   paymentMethod?: PaymentMethod;
-  invoiceStatus?: InvoiceStatus;
+  invoiceStatus?: InvoiceStatus; // Generell status (bakåtkompatibilitet)
+  invoiceHistory?: Record<string, InvoiceStatus>; // Månadsvis faktureringshistorik (YYYY-MM -> status)
   billingInterval?: BillingInterval; // Hur ofta ska faktureras
   numberOfMonths?: number; // Antal månader (för förskottsbetalning eller avtalslängd)
   nextInvoiceDate?: Date;

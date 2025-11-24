@@ -3,44 +3,43 @@
 
 import { ref, push, set } from 'firebase/database';
 import { db } from './firebase';
+import { addCustomer } from './realtimeDatabase';
+import { generateMockCustomers } from './generateMockCustomers';
+import { Customer } from '@/types';
 
-// Mock customers - empty by default
-// mockData.ts is in .gitignore and won't be available in production builds
-const mockCustomers: any[] = [];
-
-export async function seedDatabase() {
+export async function seedDatabase(count: number = 200) {
   try {
-    if (mockCustomers.length === 0) {
-      console.warn('Ingen mockdata tillgänglig - seedDatabase kommer inte att importera något');
-      return false;
-    }
+    console.log(`🚀 Börjar generera ${count} mockkunder...`);
+    
+    const mockCustomers = generateMockCustomers(count);
+    
+    console.log(`✅ Genererade ${mockCustomers.length} kunder. Börjar importera till Firebase...`);
 
-    console.log('Börjar importera mock-data till Firebase...');
-
-    const customersRef = ref(db, 'customers');
+    let success = 0;
+    let errors = 0;
     
     for (const customer of mockCustomers) {
-      // Konvertera Date-objekt till ISO-strängar för Realtime Database
-      const customerData = {
-        ...customer,
-        date: customer.date instanceof Date ? customer.date.toISOString() : customer.date,
-        createdAt: customer.createdAt instanceof Date ? customer.createdAt.toISOString() : customer.createdAt,
-        updatedAt: customer.updatedAt instanceof Date ? customer.updatedAt.toISOString() : customer.updatedAt,
-      };
-
-      // Ta bort id eftersom Firebase skapar sitt eget
-      const { id, ...customerWithoutId } = customerData;
-      const newCustomerRef = push(customersRef);
-
-      await set(newCustomerRef, customerWithoutId);
-      console.log(`✓ Lade till: ${customer.name}`);
+      try {
+        // Ta bort id eftersom Firebase skapar sitt eget
+        const { id, ...customerWithoutId } = customer;
+        
+        await addCustomer(customerWithoutId);
+        success++;
+        
+        if (success % 10 === 0) {
+          console.log(`📊 Importerat ${success}/${mockCustomers.length} kunder...`);
+        }
+      } catch (error: any) {
+        errors++;
+        console.error(`❌ Fel vid import av ${customer.name}:`, error.message);
+      }
     }
 
-    console.log('✅ Alla kunder har importerats!');
-    return true;
-  } catch (error) {
+    console.log(`✅ Klar! ${success} kunder importerade, ${errors} fel.`);
+    return { success, errors, total: mockCustomers.length };
+  } catch (error: any) {
     console.error('❌ Fel vid import:', error);
-    return false;
+    return { success: 0, errors: 1, total: 0, error: error.message };
   }
 }
 

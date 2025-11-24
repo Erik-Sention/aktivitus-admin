@@ -26,7 +26,7 @@ export default function NewCustomerPage() {
     service: 'Membership Standard',
     status: 'Aktiv',
     price: '',
-    sport: 'Löpning',
+    sport: 'Ingen',
   });
 
   const [paymentData, setPaymentData] = useState<{
@@ -57,6 +57,20 @@ export default function NewCustomerPage() {
     priceNote: '',
     usePercentage: true,
   });
+
+  const priceDeviationReasons = [
+    '',
+    'Presentkort',
+    'Tävling',
+    'Trogen kund',
+    'Benify',
+    'Kampanj',
+    'Hålla kvar kunden',
+    'Studentrabatt',
+    'Företagsrabatt',
+    'Paketpris',
+    'Annat',
+  ];
 
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [showSuccess, setShowSuccess] = useState(false);
@@ -209,6 +223,12 @@ export default function NewCustomerPage() {
       newErrors.price = 'Pris måste vara större än 0';
     }
 
+    // Kräv anledning om det finns rabatt eller om slutpriset är lägre än originalpriset
+    const hasDiscount = priceData.finalPrice < priceData.originalPrice || priceData.discount > 0;
+    if (hasDiscount && !priceData.priceNote.trim()) {
+      newErrors.price = 'Anledning till prisavvikelse är obligatorisk när pris är rabatterat';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -297,8 +317,20 @@ export default function NewCustomerPage() {
 
       <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-100 max-w-4xl">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Rad 1: Namn och E-post */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Rad 1: Datum, Namn, E-post */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Datum
+              </label>
+              <input
+                type="date"
+                value={formData.date}
+                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+              />
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Namn <span className="text-red-500">*</span>
@@ -334,7 +366,10 @@ export default function NewCustomerPage() {
                 <p className="mt-1 text-sm text-red-600">{errors.email}</p>
               )}
             </div>
+          </div>
 
+          {/* Rad 2: Telefonnummer, Plats, Coach */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Telefonnummer
@@ -345,21 +380,6 @@ export default function NewCustomerPage() {
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 placeholder="070-123 45 67"
-              />
-            </div>
-          </div>
-
-          {/* Rad 2: Datum och Plats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Datum
-              </label>
-              <input
-                type="date"
-                value={formData.date}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
               />
             </div>
 
@@ -379,10 +399,7 @@ export default function NewCustomerPage() {
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* Rad 3: Coach och Gren */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Coach <span className="text-red-500">*</span>
@@ -408,34 +425,10 @@ export default function NewCustomerPage() {
                 return null;
               })()}
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Gren
-              </label>
-              <select
-                value={formData.sport}
-                onChange={(e) => handleSportChange(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-              >
-                {SPORTS.map((sport) => (
-                  <option key={sport} value={sport}>
-                    {sport}
-                  </option>
-                ))}
-              </select>
-              {formData.sport && getTestType(formData.service, formData.sport) && (
-                <p className="mt-2 text-xs text-gray-600">
-                  <span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-medium">
-                    {getTestType(formData.service, formData.sport)}
-                  </span>
-                </p>
-              )}
-            </div>
           </div>
 
-          {/* Rad 4: Tjänst och Status */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Rad 3: Membership/Test, Gren, Status */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Membership/Test
@@ -500,6 +493,30 @@ export default function NewCustomerPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
+                Gren
+              </label>
+              <select
+                value={formData.sport}
+                onChange={(e) => handleSportChange(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+              >
+                {SPORTS.map((sport) => (
+                  <option key={sport} value={sport}>
+                    {sport}
+                  </option>
+                ))}
+              </select>
+              {formData.sport && formData.sport !== 'Ingen' && getTestType(formData.service, formData.sport) && (
+                <p className="mt-2 text-xs text-gray-600">
+                  <span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-medium">
+                    {getTestType(formData.service, formData.sport)}
+                  </span>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
                 Status
                 {isTestService(formData.service) && (
                   <span className="ml-2 text-xs text-gray-500">(Auto: Genomförd för tester)</span>
@@ -554,7 +571,7 @@ export default function NewCustomerPage() {
               </label>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               {priceData.usePercentage ? (
                 <>
                   <div>
@@ -578,6 +595,33 @@ export default function NewCustomerPage() {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-900 font-semibold"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-2">
+                      Anledning till prisavvikelse
+                      {(priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && (
+                        <span className="text-red-500"> *</span>
+                      )}
+                      {!(priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && (
+                        <span className="text-xs text-gray-500"> (frivillig)</span>
+                      )}
+                    </label>
+                    <select
+                      value={priceData.priceNote}
+                      onChange={(e) => setPriceData({ ...priceData, priceNote: e.target.value })}
+                      className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                        errors.price && (priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && !priceData.priceNote ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                    >
+                      {priceDeviationReasons.map((reason) => (
+                        <option key={reason} value={reason}>
+                          {reason || 'Välj anledning...'}
+                        </option>
+                      ))}
+                    </select>
+                    {errors.price && (priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && !priceData.priceNote && (
+                      <p className="mt-1 text-sm text-red-600">{errors.price}</p>
+                    )}
+                  </div>
                 </>
               ) : (
                 <>
@@ -588,7 +632,7 @@ export default function NewCustomerPage() {
                       value={priceData.finalPrice}
                       onChange={(e) => handleManualPriceChange(parseFloat(e.target.value) || 0)}
                       className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 font-semibold ${
-                        errors.price ? 'border-red-500' : 'border-gray-300'
+                        errors.price && !(priceData.finalPrice < priceData.originalPrice && !priceData.priceNote) ? 'border-red-500' : 'border-gray-300'
                       }`}
                       placeholder="0"
                     />
@@ -602,21 +646,35 @@ export default function NewCustomerPage() {
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-900"
                     />
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-900 mb-2">
+                      Anledning till prisavvikelse
+                      {(priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && (
+                        <span className="text-red-500"> *</span>
+                      )}
+                      {!(priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && (
+                        <span className="text-xs text-gray-500"> (frivillig)</span>
+                      )}
+                    </label>
+                    <select
+                      value={priceData.priceNote}
+                      onChange={(e) => setPriceData({ ...priceData, priceNote: e.target.value })}
+                      className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                        errors.price && (priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && !priceData.priceNote ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                    >
+                      {priceDeviationReasons.map((reason) => (
+                        <option key={reason} value={reason}>
+                          {reason || 'Välj anledning...'}
+                        </option>
+                      ))}
+                    </select>
+                    {errors.price && (priceData.finalPrice < priceData.originalPrice || priceData.discount > 0) && !priceData.priceNote && (
+                      <p className="mt-1 text-sm text-red-600">{errors.price}</p>
+                    )}
+                  </div>
                 </>
               )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Anledning till prisavvikelse <span className="text-xs text-gray-500">(frivillig)</span>
-              </label>
-              <input
-                type="text"
-                value={priceData.priceNote}
-                onChange={(e) => setPriceData({ ...priceData, priceNote: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                placeholder="T.ex. Presentkort, 15% kampanj, hålla kvar kunden..."
-              />
             </div>
 
             {errors.price && (
@@ -628,7 +686,7 @@ export default function NewCustomerPage() {
           <div className="bg-blue-50 p-6 rounded-lg border border-blue-200">
             <h3 className="text-md font-semibold text-gray-900 mb-4">Betalningsinformation för denna tjänst</h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-900 mb-2">
                   Betalningsmetod
@@ -664,66 +722,66 @@ export default function NewCustomerPage() {
               </div>
 
               {isMembershipService(formData.service) && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-900 mb-2">
-                      Faktureringsintervall
-                    </label>
-                    <select
-                      value={paymentData.billingInterval}
-                      onChange={(e) => setPaymentData({ ...paymentData, billingInterval: e.target.value as any })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                    >
-                      {BILLING_INTERVALS.filter(interval => interval !== 'Engångsbetalning').map((interval) => (
-                        <option key={interval} value={interval}>
-                          {interval}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Faktureringsintervall
+                  </label>
+                  <select
+                    value={paymentData.billingInterval}
+                    onChange={(e) => setPaymentData({ ...paymentData, billingInterval: e.target.value as any })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  >
+                    {BILLING_INTERVALS.filter(interval => interval !== 'Engångsbetalning').map((interval) => (
+                      <option key={interval} value={interval}>
+                        {interval}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-                  {(paymentData.paymentMethod === 'Förskottsbetalning' || paymentData.billingInterval !== 'Månadsvis') && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-900 mb-2">
-                        Antal månader <span className="text-xs text-gray-500">(avtalslängd/förskottsbet.)</span>
-                      </label>
-                      <input
-                        type="number"
-                        value={paymentData.numberOfMonths}
-                        onChange={(e) => setPaymentData({ ...paymentData, numberOfMonths: parseInt(e.target.value) || 1 })}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                        min="1"
-                        max="36"
-                      />
-                    </div>
-                  )}
+              {isMembershipService(formData.service) && (paymentData.paymentMethod === 'Förskottsbetalning' || paymentData.billingInterval !== 'Månadsvis') && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Antal månader <span className="text-xs text-gray-500">(avtalslängd/förskottsbet.)</span>
+                  </label>
+                  <input
+                    type="number"
+                    value={paymentData.numberOfMonths}
+                    onChange={(e) => setPaymentData({ ...paymentData, numberOfMonths: parseInt(e.target.value) || 1 })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                    min="1"
+                    max="36"
+                  />
+                </div>
+              )}
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-900 mb-2">
-                      Nästa faktureringsdatum
-                    </label>
-                    <input
-                      type="date"
-                      value={paymentData.nextInvoiceDate}
-                      onChange={(e) => setPaymentData({ ...paymentData, nextInvoiceDate: e.target.value })}
-                      className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                    />
-                  </div>
+              {isMembershipService(formData.service) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Nästa faktureringsdatum
+                  </label>
+                  <input
+                    type="date"
+                    value={paymentData.nextInvoiceDate}
+                    onChange={(e) => setPaymentData({ ...paymentData, nextInvoiceDate: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  />
+                </div>
+              )}
 
-                  {paymentData.paymentMethod === 'Förskottsbetalning' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-900 mb-2">
-                        Betald till (datum)
-                      </label>
-                      <input
-                        type="date"
-                        value={paymentData.paidUntil}
-                        onChange={(e) => setPaymentData({ ...paymentData, paidUntil: e.target.value })}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                      />
-                    </div>
-                  )}
-                </>
+              {isMembershipService(formData.service) && paymentData.paymentMethod === 'Förskottsbetalning' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-900 mb-2">
+                    Betald till (datum)
+                  </label>
+                  <input
+                    type="date"
+                    value={paymentData.paidUntil}
+                    onChange={(e) => setPaymentData({ ...paymentData, paidUntil: e.target.value })}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  />
+                </div>
               )}
 
               <div>

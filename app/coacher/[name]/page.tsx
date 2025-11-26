@@ -49,8 +49,10 @@ export default function CoachDetailPage() {
   useEffect(() => {
     const loadUserRole = async () => {
       const role = await import('@/lib/auth').then(m => m.getUserRole());
-      console.log('🔐 Inloggad användares roll:', role);
-      console.log('✏️ Kan redigera roll:', role === 'admin' || role === 'superuser');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🔐 Inloggad användares roll:', role);
+        console.log('✏️ Kan redigera roll:', role === 'admin' || role === 'superuser');
+      }
       setCurrentUserRole(role);
     };
     loadUserRole();
@@ -92,7 +94,9 @@ export default function CoachDetailPage() {
         
         // Om rollen har ändrats, uppdatera userProfile i databasen
         if (editedProfile.role && editedProfile.role !== profile?.role) {
-          console.log('🔄 Uppdaterar roll i databasen...');
+          if (process.env.NODE_ENV === 'development') {
+            // Uppdaterar roll i databasen
+          }
           
           // Hitta coachens email från profilen
           const coachEmail = editedProfile.email;
@@ -105,14 +109,20 @@ export default function CoachDetailPage() {
                 role: editedProfile.role,
                 displayName: editedProfile.name
               });
-              console.log('✅ Roll uppdaterad i databasen:', coachEmail, '→', editedProfile.role);
+              if (process.env.NODE_ENV === 'development') {
+                // Roll uppdaterad i databasen
+              }
               alert(`Roll uppdaterad! ${editedProfile.name} har nu rollen "${editedProfile.role}".`);
             } catch (error) {
-              console.error('❌ Fel vid uppdatering av roll:', error);
+              if (process.env.NODE_ENV === 'development') {
+                console.error('❌ Fel vid uppdatering av roll:', error);
+              }
               alert('Varning: Profilen sparades men rollen kunde inte uppdateras i användarregistret.');
             }
           } else {
-            console.warn('⚠️ Ingen email hittades för coachen. Rollen kunde inte uppdateras i userProfiles.');
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('⚠️ Ingen email hittades för coachen. Rollen kunde inte uppdateras i userProfiles.');
+            }
             alert('Varning: Lägg till en e-postadress för att rollen ska kunna synkas till användarens konto.');
           }
         }

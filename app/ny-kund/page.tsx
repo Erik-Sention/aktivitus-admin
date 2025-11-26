@@ -123,10 +123,14 @@ export default function NewCustomerPage() {
     if (serviceFromFirebase) {
       // Tjänsten finns i Firebase - använd dess pris direkt
       suggestedPrice = serviceFromFirebase.basePrice;
-      console.log(`✅ Hittade tjänst i Firebase: ${selectedService}, pris: ${suggestedPrice} kr`);
+      if (process.env.NODE_ENV === 'development') {
+        // Tjänst hittades i Firebase
+      }
     } else {
       // Om tjänsten inte finns i Firebase, visa 0 och varna
-      console.warn(`⚠️ Tjänst ${selectedService} hittades inte i Firebase. Lägg till den i databasen först.`);
+      if (process.env.NODE_ENV === 'development') {
+        // Tjänst hittades inte i Firebase
+      }
       suggestedPrice = 0;
     }
     
@@ -140,7 +144,9 @@ export default function NewCustomerPage() {
       discount: 0,
     });
     
-    console.log(`💰 Satt pris för ${selectedService}: ${suggestedPrice} kr`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`💰 Satt pris för ${selectedService}: ${suggestedPrice} kr`);
+    }
   };
 
   const handleSportChange = (selectedSport: string) => {

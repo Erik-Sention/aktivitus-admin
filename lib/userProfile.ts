@@ -35,7 +35,9 @@ if (typeof window !== 'undefined' && !userProfilesCacheInitialized) {
   // Prenumerera på realtidsuppdateringar
   subscribeToUserProfiles((profiles) => {
     userProfilesCache = profiles;
-    console.log('✅ User profiles cache updated:', Object.keys(profiles).length, 'profiles');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('✅ User profiles cache updated:', Object.keys(profiles).length, 'profiles');
+    }
   });
 }
 
@@ -132,7 +134,9 @@ export const initializeUserProfile = async (
       };
       
       await saveUserProfile(newProfile);
-      console.log(`✅ Initialized user profile: ${email} (role: ${defaultRole})`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`✅ Initialized user profile: ${email} (role: ${defaultRole})`);
+      }
     }
   } catch (error) {
     console.error('Error initializing user profile:', error);

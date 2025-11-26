@@ -3,6 +3,7 @@ import { ref, set, push } from 'firebase/database';
 import { db } from './firebase';
 import { Customer, ServiceEntry } from '@/types';
 import { CoachProfile } from './coachProfiles';
+import { isTestService } from './constants';
 
 // Parse CSV text to array of objects
 export function parseCSV(csvText: string): Record<string, string>[] {
@@ -18,15 +19,24 @@ export function parseCSV(csvText: string): Record<string, string>[] {
     const line = lines[i].trim();
     if (!line) continue; // Hoppa över tomma rader
     
-    // Enkel CSV-parsing (hantera kommatecken korrekt)
+    // CSV-parsing med korrekt hantering av escaped citattecken
     const values: string[] = [];
     let currentValue = '';
     let inQuotes = false;
     
     for (let j = 0; j < line.length; j++) {
       const char = line[j];
+      const nextChar = j < line.length - 1 ? line[j + 1] : '';
+      
       if (char === '"') {
-        inQuotes = !inQuotes;
+        if (inQuotes && nextChar === '"') {
+          // Escaped citattecken ("" i CSV blir " i värde)
+          currentValue += '"';
+          j++; // Hoppa över nästa citattecken
+        } else {
+          // Start eller slut på citerat värde
+          inQuotes = !inQuotes;
+        }
       } else if (char === ',' && !inQuotes) {
         values.push(currentValue.trim());
         currentValue = '';
@@ -61,11 +71,12 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
 
   for (const row of rows) {
     try {
+      const customerDate = row.date ? new Date(row.date) : new Date();
       const customerData: Omit<Customer, 'id'> = {
         name: row.name || '',
         email: row.email || '',
         phone: row.phone || undefined,
-        date: new Date(row.date || new Date()),
+        date: customerDate,
         place: row.place as any,
         coach: row.coach || '',
         service: row.service as any,
@@ -73,7 +84,24 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
         price: parseFloat(row.price || '0'),
         sport: row.sport as any,
         history: [],
-        serviceHistory: row.serviceHistory ? (JSON.parse(row.serviceHistory) as ServiceEntry[]) : [],
+        serviceHistory: row.serviceHistory && row.serviceHistory.trim() ? (() => {
+          try {
+            // Ta bort yttre citattecken om de finns och hantera escaped citattecken
+            let cleanedJson = row.serviceHistory.trim();
+            // Ta bort inledande och avslutande citattecken om de finns
+            if (cleanedJson.startsWith('"') && cleanedJson.endsWith('"')) {
+              cleanedJson = cleanedJson.slice(1, -1);
+            }
+            // Konvertera escaped citattecken ("" -> ")
+            cleanedJson = cleanedJson.replace(/""/g, '"');
+            return JSON.parse(cleanedJson) as ServiceEntry[];
+          } catch (e) {
+            if (process.env.NODE_ENV === 'development') {
+              console.error('Fel vid parsing av serviceHistory:', e, row.serviceHistory);
+            }
+            return [];
+          }
+        })() : [],
         createdAt: new Date(),
         updatedAt: new Date(),
       };
@@ -83,13 +111,154 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
         errors.push(`Rad saknar obligatoriska fält: ${row.name || 'Okänt'}`);
         continue;
       }
+      
+      // Validera att huvuddatumet är korrekt (om kunden har serviceHistory, kontrollera att huvuddatumet är före alla slutdatum)
+      if (customerData.serviceHistory && customerData.serviceHistory.length > 0) {
+        const allEndDates = customerData.serviceHistory
+          .map(entry => entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null)
+          .filter((date): date is Date => date !== null);
+        
+        const earliestEndDate = allEndDates.length > 0 ? new Date(Math.min(...allEndDates.map(d => d.getTime()))) : null;
+        
+        // Om huvuddatumet är efter det tidigaste slutdatumet, justera det
+        if (earliestEndDate && customerDate > earliestEndDate) {
+          customerData.date = earliestEndDate;
+          errors.push(`Kunden ${customerData.name} hade huvuddatum efter tjänstehistorikens slutdatum. Korrigerade automatiskt.`);
+        }
+      }
 
       const customersRef = ref(db, 'customers');
       const newCustomerRef = push(customersRef);
       
       const serviceHistoryArray: ServiceEntry[] = customerData.serviceHistory || [];
       
-      await set(newCustomerRef, {
+      // Hjälpfunktion för att beräkna minimitid för memberships
+      const getMembershipMinimumMonths = (serviceName: string): number | null => {
+        if (serviceName.includes('Supreme')) {
+          return 1; // Supreme: 1 månad minimum
+        } else if (serviceName.includes('Premium')) {
+          return 2; // Premium: 2 månader minimum
+        } else if (serviceName.includes('Standard') || serviceName.includes('BAS')) {
+          return 4; // Standard: 4 månader minimum
+        }
+        return null;
+      };
+      
+      // Validera datum i serviceHistory
+      const validatedServiceHistory = serviceHistoryArray.map((entry: ServiceEntry) => {
+        const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+        const entryEndDate = entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null;
+        const isTest = isTestService(entry.service);
+        
+        if (isTest) {
+          // För tester: startdatum och slutdatum ska vara samma
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: entryDate, // Samma datum för tester
+          };
+        } else {
+          // För memberships: validera och korrigera slutdatum
+          if (entryEndDate && entryEndDate < entryDate) {
+            // Om slutdatum är före startdatum, beräkna korrekt slutdatum
+            const minimumMonths = getMembershipMinimumMonths(entry.service);
+            
+            if (minimumMonths !== null) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else {
+              // Fallback: sätt till startdatum + 1 månad
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + 1);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            }
+          }
+          
+          // Om slutdatum saknas men det är ett membership, beräkna det
+          if (!entryEndDate) {
+            const minimumMonths = getMembershipMinimumMonths(entry.service);
+            
+            if (minimumMonths !== null) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            }
+          }
+          
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: entryEndDate || undefined,
+          };
+        }
+      });
+      
+      // Uppdatera customerData med validerad serviceHistory
+      customerData.serviceHistory = validatedServiceHistory;
+      
+      // Kontrollera om några datum korrigerades
+      const hasInvalidDates = validatedServiceHistory.some((entry, index) => {
+        const originalEntry = serviceHistoryArray[index];
+        if (!originalEntry) return false;
+        const originalEndDate = originalEntry.endDate ? (originalEntry.endDate instanceof Date ? originalEntry.endDate : new Date(originalEntry.endDate)) : null;
+        const validatedEndDate = entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null;
+        return originalEndDate && validatedEndDate && originalEndDate.getTime() !== validatedEndDate.getTime();
+      });
+      
+      if (hasInvalidDates) {
+        errors.push(`Kunden ${customerData.name} hade ogiltiga datum i tjänstehistorik (slutdatum före startdatum). Korrigerade automatiskt.`);
+      }
+      
+      // Hjälpfunktion för att ta bort undefined värden från objekt
+      const removeUndefined = (obj: any): any => {
+        if (obj === null || obj === undefined) {
+          return null;
+        }
+        if (Array.isArray(obj)) {
+          return obj.map(removeUndefined).filter(item => item !== null && item !== undefined);
+        }
+        if (typeof obj === 'object') {
+          const cleaned: any = {};
+          for (const key in obj) {
+            if (obj[key] !== undefined) {
+              cleaned[key] = removeUndefined(obj[key]);
+            }
+          }
+          return cleaned;
+        }
+        return obj;
+      };
+
+      const dataToSave = {
         name: customerData.name,
         email: customerData.email,
         phone: customerData.phone || null,
@@ -101,16 +270,49 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
         price: customerData.price,
         sport: customerData.sport,
         history: customerData.history || [],
-        serviceHistory: serviceHistoryArray.map((entry: ServiceEntry) => ({
-          ...entry,
-          date: entry.date instanceof Date ? entry.date.toISOString() : (typeof entry.date === 'string' ? entry.date : new Date(entry.date).toISOString()),
-          nextInvoiceDate: entry.nextInvoiceDate ? (entry.nextInvoiceDate instanceof Date ? entry.nextInvoiceDate.toISOString() : (typeof entry.nextInvoiceDate === 'string' ? entry.nextInvoiceDate : new Date(entry.nextInvoiceDate).toISOString())) : undefined,
-          paidUntil: entry.paidUntil ? (entry.paidUntil instanceof Date ? entry.paidUntil.toISOString() : (typeof entry.paidUntil === 'string' ? entry.paidUntil : new Date(entry.paidUntil).toISOString())) : undefined,
-        })),
+        serviceHistory: validatedServiceHistory.map((entry: ServiceEntry) => {
+          const mappedEntry: any = {
+            id: entry.id,
+            service: entry.service,
+            price: entry.price,
+            date: entry.date instanceof Date ? entry.date.toISOString() : (typeof entry.date === 'string' ? entry.date : new Date(entry.date).toISOString()),
+            status: entry.status,
+            sport: entry.sport,
+          };
+          
+          // Lägg bara till fält som har värden (inte undefined)
+          if (entry.originalPrice !== undefined && entry.originalPrice !== null) mappedEntry.originalPrice = entry.originalPrice;
+          if (entry.discount !== undefined && entry.discount !== null) mappedEntry.discount = entry.discount;
+          if (entry.priceNote) mappedEntry.priceNote = entry.priceNote;
+          if (entry.endDate) mappedEntry.endDate = entry.endDate instanceof Date ? entry.endDate.toISOString() : (typeof entry.endDate === 'string' ? entry.endDate : new Date(entry.endDate).toISOString());
+          if (entry.coach) mappedEntry.coach = entry.coach;
+          if (entry.coachHistory && entry.coachHistory.length > 0) {
+            mappedEntry.coachHistory = entry.coachHistory.map(change => ({
+              coach: change.coach,
+              date: change.date instanceof Date ? change.date.toISOString() : (typeof change.date === 'string' ? change.date : new Date(change.date).toISOString()),
+            }));
+          }
+          if (entry.paymentMethod) mappedEntry.paymentMethod = entry.paymentMethod;
+          if (entry.invoiceStatus) mappedEntry.invoiceStatus = entry.invoiceStatus;
+          if (entry.invoiceHistory) mappedEntry.invoiceHistory = entry.invoiceHistory;
+          if (entry.billingInterval) mappedEntry.billingInterval = entry.billingInterval;
+          if (entry.numberOfMonths !== undefined && entry.numberOfMonths !== null) mappedEntry.numberOfMonths = entry.numberOfMonths;
+          if (entry.nextInvoiceDate) mappedEntry.nextInvoiceDate = entry.nextInvoiceDate instanceof Date ? entry.nextInvoiceDate.toISOString() : (typeof entry.nextInvoiceDate === 'string' ? entry.nextInvoiceDate : new Date(entry.nextInvoiceDate).toISOString());
+          if (entry.paidUntil) mappedEntry.paidUntil = entry.paidUntil instanceof Date ? entry.paidUntil.toISOString() : (typeof entry.paidUntil === 'string' ? entry.paidUntil : new Date(entry.paidUntil).toISOString());
+          if (entry.invoiceReference) mappedEntry.invoiceReference = entry.invoiceReference;
+          if (entry.invoiceNote) mappedEntry.invoiceNote = entry.invoiceNote;
+          
+          return mappedEntry;
+        }),
         isSeniorCoach: customerData.isSeniorCoach || false,
         createdAt: customerData.createdAt.toISOString(),
         updatedAt: customerData.updatedAt.toISOString(),
-      });
+      };
+      
+      // Ta bort alla undefined värden innan vi sparar till Firebase
+      const cleanedData = removeUndefined(dataToSave);
+      
+      await set(newCustomerRef, cleanedData);
 
       success++;
     } catch (error: any) {

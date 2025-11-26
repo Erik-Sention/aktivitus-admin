@@ -14,7 +14,7 @@ const loadCoachNamesFromFirebase = async (): Promise<string[]> => {
     coachNamesCacheInitialized = true;
     return names;
   } catch (error) {
-    console.error('Error loading coach names from Firebase:', error);
+    // Error loading coach names
     return [];
   }
 };

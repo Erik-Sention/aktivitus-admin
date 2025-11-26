@@ -75,7 +75,9 @@ export const logActivity = (
   const user = getCurrentUser();
   
   if (!user) {
-    console.warn('Kan inte logga aktivitet: Ingen användare inloggad');
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('Kan inte logga aktivitet: Ingen användare inloggad');
+    }
     return;
   }
   

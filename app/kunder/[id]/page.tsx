@@ -1962,12 +1962,24 @@ export default function EditCustomerPage() {
                 <p className="font-medium text-gray-900">
                   {(() => {
                     let totalRevenue = 0;
+                    const now = new Date();
                     serviceHistory.forEach((entry) => {
                       if (isMembershipService(entry.service)) {
                         // Beräkna antal månader tjänsten varit aktiv
                         const startDate = new Date(entry.date);
-                        // För aktiva tjänster utan slutdatum, använd idag för beräkning
-                        const endDate = entry.endDate ? new Date(entry.endDate) : (entry.status === 'Aktiv' ? new Date() : startDate);
+                        // För aktiva tjänster: använd bara idag (räkna bara faktiska månader hittills)
+                        // För avslutade: använd slutdatum, men max till idag
+                        let endDate: Date;
+                        if (entry.status === 'Aktiv') {
+                          endDate = now; // Använd bara idag, inte framtida slutdatum
+                        } else if (entry.endDate) {
+                          endDate = new Date(entry.endDate);
+                          if (endDate > now) {
+                            endDate = now; // Om slutdatum är i framtiden, använd idag
+                          }
+                        } else {
+                          endDate = startDate; // Ingen slutdatum och inte aktiv
+                        }
                         
                         // Räkna månader mellan start och slut
                         const monthsDiff = (endDate.getFullYear() - startDate.getFullYear()) * 12 + 

@@ -63,7 +63,21 @@ const generatePhone = (): string => {
   return `+46${randomItem(prefixes)}${randomInt(100000, 999999)}`;
 };
 
-// Generera service history med olika memberships och tester över tid
+// Hjälpfunktion för att beräkna minimitid för memberships
+const getMembershipMinimumMonths = (serviceName: string): number => {
+  if (serviceName.includes('Supreme')) {
+    return 1; // Supreme: 1 månad minimum
+  } else if (serviceName.includes('Premium')) {
+    return 2; // Premium: 2 månader minimum
+  } else if (serviceName.includes('Standard') || serviceName.includes('BAS')) {
+    return 4; // Standard: 4 månader minimum
+  } else if (serviceName.includes('Iform') && serviceName.includes('4 mån')) {
+    return 4; // Iform: 4 månader
+  }
+  return 1; // Default: 1 månad
+};
+
+// Generera service history - distribution: 70% har 1 tjänst, 25% har 2 tjänster, 5% har 3 tjänster
 const generateServiceHistory = (
   startDate: Date,
   endDate: Date,
@@ -72,92 +86,58 @@ const generateServiceHistory = (
 ): ServiceEntry[] => {
   const history: ServiceEntry[] = [];
   let currentDate = new Date(startDate);
-  const numServices = randomInt(1, 5); // 1-5 tjänster per kund
+  const now = new Date();
   
-  for (let i = 0; i < numServices && currentDate <= endDate; i++) {
-    const isMembership = i === numServices - 1 || Math.random() < 0.6; // Sista är oftast membership
-    const serviceId = `service_${Date.now()}_${i}_${Math.random()}`;
-    
-    if (isMembership) {
-      // Välj membership - använd vanliga memberships
-      const commonMemberships: MembershipType[] = [
-        'Membership Standard',
-        'Membership Standard TRI/OCR/MULTI',
-        'Membership Premium',
-        'Membership Premium TRI/OCR/MULTI',
-        'Membership Supreme',
-        'Membership Supreme TRI/OCR/MULTI',
-        'Membership Aktivitus Iform 4 mån',
-        'Membership BAS',
-        'Membership Utan tester',
-      ];
-      
-      const membership = randomItem(commonMemberships);
-      const basePrice = SERVICE_BASE_PRICES[membership] || 1195;
-      const price = basePrice + randomInt(-50, 100);
-      
-      // Bestäm status
-      let status: Status;
-      let endDateValue: Date | undefined;
-      
-      if (i === numServices - 1) {
-        // Sista tjänsten - kan vara aktiv eller nyligen avslutad
-        status = Math.random() < 0.7 ? 'Aktiv' : (Math.random() < 0.5 ? 'Inaktiv' : 'Pausad');
-        if (status !== 'Aktiv') {
-          endDateValue = randomDate(currentDate, endDate);
-        }
-      } else {
-        // Tidigare tjänster är alltid inaktiva/genomförda
-        status = Math.random() < 0.7 ? 'Inaktiv' : 'Pausad';
-        const serviceEndDate = randomDate(
-          currentDate,
-          new Date(Math.min(currentDate.getTime() + 365 * 24 * 60 * 60 * 1000, endDate.getTime()))
-        );
-        endDateValue = serviceEndDate;
-        currentDate = new Date(serviceEndDate.getTime() + randomInt(1, 60) * 24 * 60 * 60 * 1000);
-      }
-      
-      const paymentMethods: PaymentMethod[] = ['Autogiro', 'Faktura', 'Swish', 'Förskottsbetalning'];
-      const billingIntervals: BillingInterval[] = ['Månadsvis', 'Kvartalsvis', 'Halvårsvis', 'Årlig'];
-      const invoiceStatuses: InvoiceStatus[] = ['Betald', 'Väntar på betalning', 'Förfallen'];
-      
-      const entry: ServiceEntry = {
-        id: serviceId,
-        service: membership,
-        price: price,
-        date: new Date(currentDate),
-        status: status,
-        endDate: endDateValue,
-        sport: sport,
-        coach: coach,
-        paymentMethod: randomItem(paymentMethods),
-        invoiceStatus: status === 'Aktiv' ? randomItem(invoiceStatuses) : 'Betald',
-        billingInterval: randomItem(billingIntervals),
-        numberOfMonths: randomItem(billingIntervals) === 'Månadsvis' ? 1 : 
-                        randomItem(billingIntervals) === 'Kvartalsvis' ? 3 :
-                        randomItem(billingIntervals) === 'Halvårsvis' ? 6 : 12,
-      };
-      
-      history.push(entry);
-      
-      // Nästa tjänst börjar efter denna slutat (eller direkt om aktiv)
-      if (status === 'Aktiv') {
-        break; // Sluta om aktiv
-      }
-      currentDate = new Date(endDateValue!.getTime() + randomInt(1, 90) * 24 * 60 * 60 * 1000);
-    } else {
-      // Test
-      const testOptions: TestType[] = [
-        'Tröskeltest',
-        'Tröskeltest + VO2max',
-        'Tröskeltest Triathlon',
-        'Tröskeltest Triathlon + VO2max',
-        'VO2max fristående',
-        'Funktionsanalys',
-        'Teknikanalys',
-        'Hälsopaket',
-      ];
-      
+  // Beräkna hur länge kunden har varit med (i månader)
+  const monthsSinceStart = Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 30));
+  
+  // Bestäm antal tester baserat på distribution:
+  // 70% har 0 tester (bara membership)
+  // 25% har 1 test (membership + 1 test)
+  // 5% har 2 tester (membership + 2 tester)
+  const randomValue = Math.random();
+  let numTests: number;
+  if (randomValue < 0.7) {
+    numTests = 0; // 70% - bara membership
+  } else if (randomValue < 0.95) {
+    numTests = 1; // 25% - membership + 1 test
+  } else {
+    numTests = 2; // 5% - membership + 2 tester
+  }
+  
+  // Test-options
+  const testOptions: TestType[] = [
+    'Tröskeltest',
+    'Tröskeltest + VO2max',
+    'Tröskeltest Triathlon',
+    'Tröskeltest Triathlon + VO2max',
+    'VO2max fristående',
+    'Funktionsanalys',
+    'Teknikanalys',
+    'Hälsopaket',
+  ];
+  
+  // Membership-options
+  const commonMemberships: MembershipType[] = [
+    'Membership Standard',
+    'Membership Standard TRI/OCR/MULTI',
+    'Membership Premium',
+    'Membership Premium TRI/OCR/MULTI',
+    'Membership Supreme',
+    'Membership Supreme TRI/OCR/MULTI',
+    'Membership Aktivitus Iform 4 mån',
+    'Membership BAS',
+    'Membership Utan tester',
+  ];
+  
+  // Bestäm om tester ska komma före eller efter membership
+  // 50% börjar med test, 50% börjar med membership
+  const startsWithTest = Math.random() < 0.5;
+  
+  // Lägg till tester först om kunden börjar med test
+  if (startsWithTest && numTests > 0) {
+    for (let i = 0; i < numTests; i++) {
+      const serviceId = `service_${Date.now()}_${i}_${Math.random()}`;
       const test = randomItem(testOptions);
       const basePrice = SERVICE_BASE_PRICES[test] || 1890;
       const price = basePrice + randomInt(-50, 100);
@@ -168,6 +148,7 @@ const generateServiceHistory = (
         price: price,
         date: new Date(currentDate),
         status: 'Genomförd',
+        endDate: new Date(currentDate),
         sport: sport,
         coach: coach,
         paymentMethod: Math.random() < 0.7 ? 'Swish' : 'Faktura',
@@ -177,8 +158,104 @@ const generateServiceHistory = (
       
       history.push(entry);
       
-      // Nästa tjänst börjar efter testet
+      // Nästa tjänst börjar efter testet (7-90 dagar senare)
       currentDate = new Date(currentDate.getTime() + randomInt(7, 90) * 24 * 60 * 60 * 1000);
+    }
+  }
+  
+  // Lägg till membership (alltid en)
+  const serviceId = `service_${Date.now()}_membership_${Math.random()}`;
+  let membership = randomItem(commonMemberships);
+  const basePrice = SERVICE_BASE_PRICES[membership] || 1195;
+  const price = basePrice + randomInt(-50, 100);
+  
+  // Beräkna korrekt slutdatum baserat på minimitid
+  const minimumMonths = getMembershipMinimumMonths(membership);
+  const membershipEndDate = new Date(currentDate);
+  membershipEndDate.setMonth(membershipEndDate.getMonth() + minimumMonths);
+  
+  // Bestäm status baserat på hur länge kunden har varit med:
+  // Om de har varit med max 4 månader: mestadels aktiv (80% aktiv)
+  // Om de har varit med 4-24 månader: blandat (60% aktiv)
+  // Om de har varit med över 24 månader: mestadels inaktiv (20% aktiv)
+  let status: Status;
+  let endDateValue: Date | undefined;
+  
+  if (monthsSinceStart <= 4) {
+    // Nyligen startade - mestadels aktiva
+    status = Math.random() < 0.8 ? 'Aktiv' : (Math.random() < 0.5 ? 'Inaktiv' : 'Pausad');
+  } else if (monthsSinceStart <= 24) {
+    // Mellan 4-24 månader - blandat
+    status = Math.random() < 0.6 ? 'Aktiv' : (Math.random() < 0.5 ? 'Inaktiv' : 'Pausad');
+  } else {
+    // Över 24 månader - mestadels inaktiva
+    status = Math.random() < 0.2 ? 'Aktiv' : (Math.random() < 0.5 ? 'Inaktiv' : 'Pausad');
+  }
+  
+  if (status === 'Aktiv') {
+    // För aktiva memberships, sätt slutdatum till framtiden baserat på minimitid
+    endDateValue = membershipEndDate;
+    // Om slutdatum är i det förflutna, lägg till minimitid från nu
+    if (endDateValue < now) {
+      endDateValue = new Date(now);
+      endDateValue.setMonth(endDateValue.getMonth() + minimumMonths);
+    }
+  } else {
+    // För inaktiva/pausade memberships, sätt slutdatum till det förflutna
+    // Men se till att det är efter startdatum och före nu
+    const maxEndDate = new Date(Math.min(membershipEndDate.getTime(), now.getTime()));
+    endDateValue = randomDate(currentDate, maxEndDate);
+  }
+  
+  const paymentMethods: PaymentMethod[] = ['Autogiro', 'Faktura', 'Swish', 'Förskottsbetalning'];
+  const billingIntervals: BillingInterval[] = ['Månadsvis', 'Kvartalsvis', 'Halvårsvis', 'Årlig'];
+  const invoiceStatuses: InvoiceStatus[] = ['Betald', 'Väntar på betalning', 'Förfallen'];
+  
+  const membershipEntry: ServiceEntry = {
+    id: serviceId,
+    service: membership,
+    price: price,
+    date: new Date(currentDate),
+    status: status,
+    endDate: endDateValue,
+    sport: sport,
+    coach: coach,
+    paymentMethod: randomItem(paymentMethods),
+    invoiceStatus: status === 'Aktiv' ? randomItem(invoiceStatuses) : 'Betald',
+    billingInterval: randomItem(billingIntervals),
+    numberOfMonths: minimumMonths,
+  };
+  
+  history.push(membershipEntry);
+  
+  // Lägg till tester efter membership om vi inte redan lagt till alla tester
+  if (!startsWithTest && numTests > 0) {
+    const testsAlreadyAdded = history.filter(h => h.status === 'Genomförd').length;
+    const testsToAdd = numTests - testsAlreadyAdded;
+    
+    for (let i = 0; i < testsToAdd; i++) {
+      currentDate = new Date(currentDate.getTime() + randomInt(30, 180) * 24 * 60 * 60 * 1000);
+      
+      const testServiceId = `service_${Date.now()}_test_${i}_${Math.random()}`;
+      const test = randomItem(testOptions);
+      const testBasePrice = SERVICE_BASE_PRICES[test] || 1890;
+      const testPrice = testBasePrice + randomInt(-50, 100);
+      
+      const testEntry: ServiceEntry = {
+        id: testServiceId,
+        service: test,
+        price: testPrice,
+        date: new Date(currentDate),
+        status: 'Genomförd',
+        endDate: new Date(currentDate),
+        sport: sport,
+        coach: coach,
+        paymentMethod: Math.random() < 0.7 ? 'Swish' : 'Faktura',
+        invoiceStatus: 'Betald',
+        billingInterval: 'Engångsbetalning',
+      };
+      
+      history.push(testEntry);
     }
   }
   
@@ -194,15 +271,38 @@ const generateCustomer = (index: number, startDate: Date, endDate: Date): Custom
   const coach = randomItem(COACHES);
   const sport = randomItem(SPORTS);
   
-  // Bestäm om kunden börjar med test eller membership
-  const startsWithTest = Math.random() < 0.3;
-  const customerStartDate = randomDate(startDate, endDate);
+  // Bestäm kundens startdatum baserat på distribution:
+  // 70% har varit med max 4 månader
+  // 25% har varit med mellan 4-24 månader
+  // 5% har varit med över 24 månader
+  const now = new Date();
+  const randomValue = Math.random();
+  let customerStartDate: Date;
+  
+  if (randomValue < 0.7) {
+    // 70% - startade inom de senaste 4 månaderna
+    const fourMonthsAgo = new Date(now);
+    fourMonthsAgo.setMonth(fourMonthsAgo.getMonth() - 4);
+    customerStartDate = randomDate(fourMonthsAgo, now);
+  } else if (randomValue < 0.95) {
+    // 25% - startade mellan 4-24 månader sedan
+    const fourMonthsAgo = new Date(now);
+    fourMonthsAgo.setMonth(fourMonthsAgo.getMonth() - 4);
+    const twentyFourMonthsAgo = new Date(now);
+    twentyFourMonthsAgo.setMonth(twentyFourMonthsAgo.getMonth() - 24);
+    customerStartDate = randomDate(twentyFourMonthsAgo, fourMonthsAgo);
+  } else {
+    // 5% - startade över 24 månader sedan
+    const twentyFourMonthsAgo = new Date(now);
+    twentyFourMonthsAgo.setMonth(twentyFourMonthsAgo.getMonth() - 24);
+    customerStartDate = randomDate(startDate, twentyFourMonthsAgo);
+  }
   
   const serviceHistory = generateServiceHistory(customerStartDate, endDate, sport, coach);
   
-  // Huvudtjänst är den sista i historiken (eller första om ingen historik)
-  const mainService = serviceHistory[serviceHistory.length - 1] || serviceHistory[0];
-  const mainStatus = mainService?.status || (startsWithTest ? 'Genomförd' : 'Aktiv');
+  // Huvudtjänst är membership (den finns alltid i historiken)
+  const mainService = serviceHistory.find(h => h.service.includes('Membership')) || serviceHistory[serviceHistory.length - 1] || serviceHistory[0];
+  const mainStatus = mainService?.status || 'Aktiv';
   
   return {
     id: `customer_${index}`,
@@ -212,7 +312,7 @@ const generateCustomer = (index: number, startDate: Date, endDate: Date): Custom
     date: customerStartDate,
     place: place,
     coach: coach,
-    service: mainService?.service || (startsWithTest ? randomItem(TESTS) : randomItem(MEMBERSHIPS)),
+    service: mainService?.service || randomItem(MEMBERSHIPS),
     status: mainStatus as Status,
     price: mainService?.price || SERVICE_BASE_PRICES[mainService?.service || 'Membership Standard'] || 1195,
     sport: sport,
@@ -225,7 +325,7 @@ const generateCustomer = (index: number, startDate: Date, endDate: Date): Custom
 };
 
 // Generera alla mockkunder
-export const generateMockCustomers = (count: number = 200): Customer[] => {
+export const generateMockCustomers = (count: number = 100): Customer[] => {
   const customers: Customer[] = [];
   const startDate = new Date('2020-01-01');
   const endDate = new Date(); // Idag

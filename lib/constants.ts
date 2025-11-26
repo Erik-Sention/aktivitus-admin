@@ -189,7 +189,7 @@ export const SERVICE_BASE_PRICES: Record<string, number> = {
   'Membership Aktivitus Iform Tillägg till MS 4 mån': 1748,
   'Membership Iform Extra månad': 499,
   'Membership Aktivitus Iform Fortsättning': 990,
-  'Membership BAS': 995,
+  'Membership BAS': 250,
   'Membership Avslut NOTERA SLUTDATUM': 0,
   'Save - Samtal - Standard': 0,
   'Membership Utan tester': 1595,

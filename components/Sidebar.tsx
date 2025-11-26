@@ -19,6 +19,7 @@ import {
   Package,
   ShoppingCart,
   Shield,
+  Upload,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -90,6 +91,13 @@ const menuItems = [
     icon: ShoppingCart,
     roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
+  // Import-sidan är dold för säkerhet
+  // {
+  //   name: 'Import',
+  //   href: '/import',
+  //   icon: Upload,
+  //   roles: ['superuser', 'admin'] as UserRole[],
+  // },
   {
     name: 'Användarhantering',
     href: '/admin/anvandare',
@@ -120,9 +128,6 @@ export default function Sidebar() {
         if (userProfile?.linkedCoach) {
           setLinkedCoach(userProfile.linkedCoach);
         }
-        
-        // Debug: visa roll i konsolen
-        console.log('Current user role:', role, 'Email:', currentUser.email, 'Linked coach:', userProfile?.linkedCoach);
       }
     };
     
@@ -150,7 +155,6 @@ export default function Sidebar() {
       // Omdirigera till login
       window.location.href = '/login';
     } catch (error) {
-      console.error('Fel vid utloggning:', error);
       setIsLoggingOut(false);
       // Försök ändå omdirigera
       window.location.href = '/login';

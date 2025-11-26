@@ -110,48 +110,82 @@ export default function InvoicingPage() {
   // Samla alla membership-tjänster från alla kunder
   // Inkluderar: aktiva memberships + memberships under uppsägningstid (med framtida endDate)
   const membershipServices = customers.flatMap((customer) => {
-    if (!customer.serviceHistory || customer.serviceHistory.length === 0) return [];
+    const services: any[] = [];
     
-    return customer.serviceHistory
-      .filter((service) => {
-        if (!isMembershipService(service.service)) return false;
+    // Lägg till memberships från serviceHistory
+    if (customer.serviceHistory && customer.serviceHistory.length > 0) {
+      customer.serviceHistory
+        .filter((service) => {
+          if (!isMembershipService(service.service)) return false;
+          
+          const serviceStart = new Date(service.date);
+          const serviceEnd = service.endDate ? new Date(service.endDate) : null;
+          
+          // Inkludera tjänsten om:
+          // 1. Status är 'Aktiv' (oavsett startdatum)
+          // 2. Tjänsten har ett endDate som är i framtiden eller överlappar med vald månad (uppsägningstid)
+          // 3. Tjänsten överlappade med vald månad (historisk)
+          
+          if (service.status === 'Aktiv') {
+            // Alla aktiva memberships ska visas
+            return true;
+          }
+          
+          if (serviceEnd) {
+            // Om tjänsten har ett slutdatum, inkludera om:
+            // - Slutdatumet är i framtiden (under uppsägningstid), ELLER
+            // - Tjänsten överlappade med vald månad (historisk data)
+            return serviceEnd >= monthStart;
+          }
+          
+          // För andra statusar utan endDate, kolla om de överlappade med vald månad
+          return serviceStart <= monthEnd && serviceStart >= monthStart;
+        })
+        .forEach((service) => {
+          // Hämta status för vald månad från invoiceHistory
+          // Om ingen specifik status finns för denna månad, använd standardstatusen "Väntar på betalning"
+          const monthStatus = service.invoiceHistory?.[selectedMonth] || 'Väntar på betalning';
+          
+          services.push({
+            ...service,
+            customer,
+            // Överskriv invoiceStatus med månadsvis status för visning
+            invoiceStatus: monthStatus,
+          });
+        });
+    }
+    
+    // Om huvudtjänsten är ett membership och inte redan finns i serviceHistory, lägg till den
+    if (isMembershipService(customer.service)) {
+      const mainServiceInHistory = customer.serviceHistory?.some(
+        (s) => s.service === customer.service && s.status === customer.status
+      );
+      
+      if (!mainServiceInHistory) {
+        const serviceStart = new Date(customer.date);
+        const serviceEnd = null; // Aktiva memberships har inget slutdatum än
         
-        const serviceStart = new Date(service.date);
-        const serviceEnd = service.endDate ? new Date(service.endDate) : null;
-        
-        // Inkludera tjänsten om:
-        // 1. Status är 'Aktiv' (oavsett startdatum)
-        // 2. Tjänsten har ett endDate som är i framtiden eller överlappar med vald månad (uppsägningstid)
-        // 3. Tjänsten överlappade med vald månad (historisk)
-        
-        if (service.status === 'Aktiv') {
-          // Alla aktiva memberships ska visas
-          return true;
+        // Inkludera om status är 'Aktiv' eller om tjänsten överlappade med vald månad
+        if (customer.status === 'Aktiv' || serviceStart <= monthEnd) {
+          services.push({
+            id: `main_${customer.id}`,
+            service: customer.service,
+            price: customer.price,
+            date: customer.date,
+            status: customer.status,
+            endDate: undefined,
+            sport: customer.sport,
+            coach: customer.coach,
+            paymentMethod: 'Autogiro', // Default
+            invoiceStatus: 'Väntar på betalning',
+            billingInterval: 'Månadsvis',
+            customer,
+          });
         }
-        
-        if (serviceEnd) {
-          // Om tjänsten har ett slutdatum, inkludera om:
-          // - Slutdatumet är i framtiden (under uppsägningstid), ELLER
-          // - Tjänsten överlappade med vald månad (historisk data)
-          return serviceEnd >= monthStart;
-        }
-        
-        // För andra statusar utan endDate, kolla om de överlappade med vald månad
-        return serviceStart <= monthEnd && serviceStart >= monthStart;
-      })
-      .map((service) => {
-        // Hämta status för vald månad från invoiceHistory
-        // Om ingen specifik status finns för denna månad, använd standardstatusen "Väntar på betalning"
-        // (inte invoiceStatus som kan vara från en annan månad)
-        const monthStatus = service.invoiceHistory?.[selectedMonth] || 'Väntar på betalning';
-        
-        return {
-          ...service,
-          customer,
-          // Överskriv invoiceStatus med månadsvis status för visning
-          invoiceStatus: monthStatus,
-        };
-      });
+      }
+    }
+    
+    return services;
   });
 
   // Filtrera baserat på betalningsmetod, status och plats

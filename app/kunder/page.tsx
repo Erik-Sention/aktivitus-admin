@@ -331,16 +331,17 @@ export default function CustomersPage() {
       new Date(current.date) < new Date(earliest.date) ? current : earliest
     );
     
-    // Hitta senaste datumet (antingen aktivt till idag eller senaste slutdatum)
-    let latestDate = new Date();
+    // Hitta senaste datumet - använd bara faktiska månader hittills (inte framtida)
+    const now = new Date();
+    let latestDate = now; // Standard: räkna till idag
     
     // Kolla om det finns något aktivt medlemskap
     const activeMembership = allMemberships.find(m => m.status === 'Aktiv');
     if (activeMembership) {
-      // Om aktivt, räkna till idag
-      latestDate = new Date();
+      // Om aktivt, räkna bara till idag (inte framtida slutdatum)
+      latestDate = now;
     } else {
-      // Om inget aktivt, hitta senaste slutdatumet
+      // Om inget aktivt, hitta senaste slutdatumet, men max till idag
       const membershipsWithEndDate = allMemberships.filter(m => m.endDate);
       if (membershipsWithEndDate.length > 0) {
         const latestEndDate = membershipsWithEndDate.reduce((latest, current) => {
@@ -348,13 +349,16 @@ export default function CustomersPage() {
           const latestEndDate = new Date(latest.endDate!);
           return currentEndDate > latestEndDate ? current : latest;
         });
-        latestDate = new Date(latestEndDate.endDate!);
+        const endDateValue = new Date(latestEndDate.endDate!);
+        // Använd bara idag om slutdatum är i framtiden
+        latestDate = endDateValue > now ? now : endDateValue;
       } else {
-        // Om inga slutdatum finns, använd senaste startdatumet
+        // Om inga slutdatum finns, använd senaste startdatumet, men max till idag
         const latestStartDate = allMemberships.reduce((latest, current) => 
           new Date(current.date) > new Date(latest.date) ? current : latest
         );
-        latestDate = new Date(latestStartDate.date);
+        const startDateValue = new Date(latestStartDate.date);
+        latestDate = startDateValue > now ? now : startDateValue;
       }
     }
     

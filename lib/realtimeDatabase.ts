@@ -7,6 +7,7 @@ import { AdministrativeHour, AdministrativeCategory } from '@/types/administrati
 import { Purchase, PurchaseCategory, PurchaseStatus, StatusHistoryEntry } from '@/types/purchases';
 import { UserProfile } from '@/types/userProfile';
 import { PaymentStatus } from '@/types';
+import { isTestService, isMembershipService } from './constants';
 
 const CUSTOMERS_PATH = 'customers';
 const COACH_PROFILES_PATH = 'coachProfiles';
@@ -43,10 +44,9 @@ export const testFirebaseConnection = async (): Promise<boolean> => {
   try {
     const testRef = ref(db, '.info/connected');
     const snapshot = await get(testRef);
-    console.log('Firebase connection test:', snapshot.val());
     return true;
   } catch (error) {
-    console.error('Firebase connection test failed:', error);
+    // Logga inte felmeddelanden som kan avslöja databasinformation
     return false;
   }
 };
@@ -70,10 +70,225 @@ export const formDataToCustomer = (formData: FormData, id?: string): Omit<Custom
   };
 };
 
+// Hjälpfunktion för att beräkna minimitid för memberships
+const getMembershipMinimumMonths = (serviceName: string): number | null => {
+  if (serviceName.includes('Supreme')) {
+    return 1; // Supreme: 1 månad minimum
+  } else if (serviceName.includes('Premium')) {
+    return 2; // Premium: 2 månader minimum
+  } else if (serviceName.includes('Standard') || serviceName.includes('BAS')) {
+    return 4; // Standard: 4 månader minimum
+  } else if (serviceName.includes('Iform') && serviceName.includes('4 mån')) {
+    return 4; // Iform: 4 månader
+  } else if (serviceName.includes('Iform') && serviceName.includes('Fortsättning')) {
+    return null; // Iform fortsättning - använd numberOfMonths eller behåll befintligt
+  }
+  // För andra memberships, returnera null (använd numberOfMonths eller behåll befintligt)
+  return null;
+};
+
+// Hjälpfunktion för att kontrollera om en tjänst är ett test
+const isTestServiceByName = (serviceName: string): boolean => {
+  // Använd funktionen från constants.ts om möjligt
+  try {
+    return isTestService(serviceName);
+  } catch {
+    // Fallback: Om tjänsten börjar med "Membership" eller innehåller "Iform" eller "Save", är det inte ett test
+    if (serviceName.includes('Membership') || serviceName.includes('Iform') || serviceName.includes('Save')) {
+      return false;
+    }
+    // Om tjänsten innehåller "test" i namnet eller är kända tester
+    const testKeywords = ['test', 'Test', 'Tröskeltest', 'VO2max', 'Wingate', 'Teknikanalys', 'Funktionsanalys', 
+      'Hälsopaket', 'Sommardubbel', 'Blodanalys', 'Kroppss', 'Natriumanalys', 'Kostregistrering', 'Kostrådgivning',
+      'Personlig Träning', 'PT-Klipp', 'Sen avbokning'];
+    return testKeywords.some(keyword => serviceName.includes(keyword));
+  }
+};
+
+// Validera och korrigera datum i en kund
+const validateAndFixCustomerDates = (customer: Customer): Customer => {
+  let needsUpdate = false;
+  const fixedCustomer = { ...customer };
+  
+  // Validera och fixa serviceHistory datum
+  if (fixedCustomer.serviceHistory && fixedCustomer.serviceHistory.length > 0) {
+    // Sortera serviceHistory efter datum för att säkerställ att memberships inte överlappar
+    const sortedHistory = [...fixedCustomer.serviceHistory].sort((a, b) => {
+      const dateA = a.date instanceof Date ? a.date : new Date(a.date);
+      const dateB = b.date instanceof Date ? b.date : new Date(b.date);
+      return dateA.getTime() - dateB.getTime();
+    });
+    
+    fixedCustomer.serviceHistory = sortedHistory.map((entry, index) => {
+      let entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+      const entryEndDate = entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null;
+      const isTest = isTestServiceByName(entry.service);
+      
+      if (isTest) {
+        // För tester: startdatum och slutdatum ska vara samma
+        if (!entryEndDate || entryEndDate.getTime() !== entryDate.getTime()) {
+          needsUpdate = true;
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: entryDate, // Samma datum för tester
+          };
+        }
+        return {
+          ...entry,
+          date: entryDate,
+          endDate: entryDate,
+        };
+      } else {
+        // För memberships: kontrollera att de inte överlappar med tidigare memberships
+        const previousMemberships = sortedHistory.slice(0, index).filter(e => 
+          !isTestServiceByName(e.service)
+        );
+        
+        // Om det finns tidigare memberships, säkerställ att denna börjar efter den sista slutat
+        if (previousMemberships.length > 0) {
+          const lastMembership = previousMemberships[previousMemberships.length - 1];
+          const lastEndDate = lastMembership.endDate 
+            ? (lastMembership.endDate instanceof Date ? lastMembership.endDate : new Date(lastMembership.endDate))
+            : null;
+          
+          if (lastEndDate && entryDate < lastEndDate) {
+            // Denna membership börjar innan den föregående slutat - flytta startdatumet
+            needsUpdate = true;
+            entryDate = new Date(lastEndDate.getTime() + 1 * 24 * 60 * 60 * 1000); // Minst 1 dag efter
+          }
+        }
+        
+        if (entryEndDate && entryEndDate < entryDate) {
+          // Om slutdatum är före startdatum, beräkna korrekt slutdatum
+          needsUpdate = true;
+          const minimumMonths = getMembershipMinimumMonths(entry.service);
+          
+          if (minimumMonths !== null) {
+            // Använd minimitid
+            const newEndDate = new Date(entryDate);
+            newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: newEndDate,
+            };
+          } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+            // Använd numberOfMonths om det finns
+            const newEndDate = new Date(entryDate);
+            newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: newEndDate,
+            };
+          } else {
+            // Fallback: sätt till startdatum + 1 månad
+            const newEndDate = new Date(entryDate);
+            newEndDate.setMonth(newEndDate.getMonth() + 1);
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: newEndDate,
+            };
+          }
+        }
+        
+        // Om slutdatum saknas men det är ett membership, beräkna det
+        if (!entryEndDate) {
+          needsUpdate = true;
+          const minimumMonths = getMembershipMinimumMonths(entry.service);
+          
+          if (minimumMonths !== null) {
+            const newEndDate = new Date(entryDate);
+            newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: newEndDate,
+            };
+          } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+            const newEndDate = new Date(entryDate);
+            newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: newEndDate,
+            };
+          }
+        }
+        
+        return {
+          ...entry,
+          date: entryDate,
+          endDate: entryEndDate || undefined,
+        };
+      }
+    });
+    
+    // Validera huvuddatum - det ska vara före eller lika med det tidigaste startdatumet i serviceHistory
+    const allStartDates = fixedCustomer.serviceHistory.map(entry => 
+      entry.date instanceof Date ? entry.date : new Date(entry.date)
+    );
+    const earliestStartDate = allStartDates.length > 0 
+      ? new Date(Math.min(...allStartDates.map(d => d.getTime())))
+      : null;
+    
+    // Om huvuddatumet är efter det tidigaste startdatumet, justera det
+    if (earliestStartDate && fixedCustomer.date > earliestStartDate) {
+      needsUpdate = true;
+      fixedCustomer.date = earliestStartDate;
+    }
+    
+    // Validera att huvuddatumet är före alla slutdatum
+    const allEndDates = fixedCustomer.serviceHistory
+      .map(entry => entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null)
+      .filter((date): date is Date => date !== null);
+    
+    if (allEndDates.length > 0) {
+      const earliestEndDate = new Date(Math.min(...allEndDates.map(d => d.getTime())));
+      if (fixedCustomer.date > earliestEndDate) {
+        needsUpdate = true;
+        fixedCustomer.date = earliestEndDate;
+      }
+    }
+  }
+  
+  // Om något datum korrigerades, spara automatiskt tillbaka till Firebase
+  // Men bara om datumet faktiskt ändrades (för att undvika oändliga loops)
+  if (needsUpdate && fixedCustomer.id) {
+    // Kontrollera om datumet faktiskt ändrades genom att jämföra med originaldatum
+    const originalDateStr = customer.date.toISOString();
+    const fixedDateStr = fixedCustomer.date.toISOString();
+    const datesChanged = originalDateStr !== fixedDateStr;
+    
+    // Kontrollera om serviceHistory ändrades
+    const serviceHistoryChanged = JSON.stringify(customer.serviceHistory) !== JSON.stringify(fixedCustomer.serviceHistory);
+    
+    if (datesChanged || serviceHistoryChanged) {
+      // Spara asynkront utan att vänta (för att inte blockera UI)
+      // Använd en liten delay för att undvika att trigga för många uppdateringar samtidigt
+      setTimeout(() => {
+        updateCustomer(fixedCustomer.id!, {
+          date: fixedCustomer.date,
+          serviceHistory: fixedCustomer.serviceHistory,
+          updatedAt: new Date(),
+        }).catch((error) => {
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`Kunde inte uppdatera datum för kund ${fixedCustomer.name}:`, error);
+          }
+        });
+      }, 100);
+    }
+  }
+  
+  return fixedCustomer;
+};
+
 // Konvertera Realtime Database data till Customer
 const snapshotToCustomer = (id: string, snapshot: DataSnapshot): Customer => {
   const data = snapshot.val();
-  return {
+  const customer: Customer = {
     id,
     name: data.name || '',
     email: data.email || '',
@@ -103,6 +318,9 @@ const snapshotToCustomer = (id: string, snapshot: DataSnapshot): Customer => {
     createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
     updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
   };
+  
+  // Validera och korrigera datum
+  return validateAndFixCustomerDates(customer);
 };
 
 // Lägg till ny kund från FormData
@@ -146,26 +364,16 @@ export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<s
     
     if (!apiKey || apiKey === 'demo-api-key' || apiKey.includes('demo')) {
       const errorMsg = 'Firebase är inte korrekt konfigurerad. Kontrollera NEXT_PUBLIC_FIREBASE_API_KEY i .env.local';
-      console.error(errorMsg);
-      console.error('Current API Key:', apiKey?.substring(0, 20) + '...');
       throw new Error(errorMsg);
     }
 
     if (!databaseURL || databaseURL.includes('demo')) {
       const errorMsg = 'Firebase Database URL är inte korrekt konfigurerad. Kontrollera NEXT_PUBLIC_FIREBASE_DATABASE_URL i .env.local';
-      console.error(errorMsg);
-      console.error('Current Database URL:', databaseURL);
       throw new Error(errorMsg);
     }
 
-    console.log('🔵 Försöker spara kund till Firebase:', customerData.name);
-    console.log('🔵 Database URL:', databaseURL);
-    console.log('🔵 API Key:', apiKey.substring(0, 20) + '...');
-    
     const customersRef = ref(db, CUSTOMERS_PATH);
     const newCustomerRef = push(customersRef);
-    
-    console.log('🔵 Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
     
     const dataToSave = {
       name: customerData.name,
@@ -213,14 +421,9 @@ export const addCustomer = async (customerData: Omit<Customer, 'id'>): Promise<s
     // Ta bort alla undefined värden innan vi sparar till Firebase
     const cleanedData = removeUndefined(dataToSave);
     
-    console.log('🔵 Data att spara (före rensning):', dataToSave);
-    console.log('🔵 Data att spara (efter rensning):', cleanedData);
-    console.log('🔵 Firebase path:', `${CUSTOMERS_PATH}/${newCustomerRef.key}`);
-    
     await set(newCustomerRef, cleanedData);
     
     const customerId = newCustomerRef.key || '';
-    console.log('✅ Kund sparad till Firebase med ID:', customerId);
     
     return customerId;
   } catch (error: any) {
@@ -273,6 +476,116 @@ export const updateCustomer = async (
   updates: Partial<Customer>
 ): Promise<void> => {
   try {
+    // Om serviceHistory ingår i uppdateringen, validera datum först
+    if (updates.serviceHistory && updates.serviceHistory.length > 0) {
+      updates.serviceHistory = updates.serviceHistory.map((entry) => {
+        const entryDate = entry.date instanceof Date ? entry.date : new Date(entry.date);
+        const entryEndDate = entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null;
+        const isTest = isTestServiceByName(entry.service);
+        
+        if (isTest) {
+          // För tester: startdatum och slutdatum ska vara samma
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: entryDate, // Samma datum för tester
+          };
+        } else {
+          // För memberships: validera och korrigera slutdatum
+          if (entryEndDate && entryEndDate < entryDate) {
+            // Om slutdatum är före startdatum, beräkna korrekt slutdatum
+            const minimumMonths = getMembershipMinimumMonths(entry.service);
+            
+            if (minimumMonths !== null) {
+              // Använd minimitid
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+              // Använd numberOfMonths om det finns
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else {
+              // Fallback: sätt till startdatum + 1 månad
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + 1);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            }
+          }
+          
+          // Om slutdatum saknas men det är ett membership, beräkna det
+          if (!entryEndDate) {
+            const minimumMonths = getMembershipMinimumMonths(entry.service);
+            
+            if (minimumMonths !== null) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
+              const newEndDate = new Date(entryDate);
+              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
+              return {
+                ...entry,
+                date: entryDate,
+                endDate: newEndDate,
+              };
+            }
+          }
+          
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: entryEndDate || undefined,
+          };
+        }
+      });
+      
+      // Validera huvuddatum om det finns
+      if (updates.date) {
+        const updateDate = updates.date instanceof Date ? updates.date : new Date(updates.date);
+        const allStartDates = updates.serviceHistory.map(entry => 
+          entry.date instanceof Date ? entry.date : new Date(entry.date)
+        );
+        const earliestStartDate = allStartDates.length > 0 
+          ? new Date(Math.min(...allStartDates.map(d => d.getTime())))
+          : null;
+        
+        // Om huvuddatumet är efter det tidigaste startdatumet, justera det
+        if (earliestStartDate && updateDate > earliestStartDate) {
+          updates.date = earliestStartDate;
+        }
+        
+        // Validera att huvuddatumet är före alla slutdatum
+        const allEndDates = updates.serviceHistory
+          .map(entry => entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null)
+          .filter((date): date is Date => date !== null);
+        
+        if (allEndDates.length > 0) {
+          const earliestEndDate = new Date(Math.min(...allEndDates.map(d => d.getTime())));
+          if (updateDate > earliestEndDate) {
+            updates.date = earliestEndDate;
+          }
+        }
+      }
+    }
+    
     const customerRef = ref(db, `${CUSTOMERS_PATH}/${id}`);
     const updateData: any = {
       ...updates,
@@ -355,15 +668,10 @@ export const subscribeToCustomers = (
 ): (() => void) => {
   const customersRef = ref(db, CUSTOMERS_PATH);
   
-  console.log('🔵 Prenumererar på kunder från Firebase path:', CUSTOMERS_PATH);
-  
   const unsubscribe = onValue(
     customersRef, 
     (snapshot) => {
-      console.log('🔵 Firebase listener triggered, snapshot exists:', snapshot.exists());
-      
       if (!snapshot.exists()) {
-        console.log('🔵 Ingen data i Firebase, returnerar tom array');
         callback([]);
         return;
       }
@@ -374,13 +682,9 @@ export const subscribeToCustomers = (
         customers.push(customer);
       });
       
-      console.log('🔵 Laddade', customers.length, 'kunder från Firebase');
       callback(customers);
     },
     (error) => {
-      console.error('❌ Firebase listener error:', error);
-      console.error('Error code:', (error as any).code);
-      console.error('Error message:', error.message);
       // Returnera tom array vid fel
       callback([]);
     }
@@ -388,7 +692,6 @@ export const subscribeToCustomers = (
   
   // Returnera unsubscribe-funktion
   return () => {
-    console.log('🔵 Avprenumererar från Firebase');
     off(customersRef, 'value', unsubscribe);
   };
 };

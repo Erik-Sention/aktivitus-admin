@@ -20,11 +20,25 @@ export default function MembershipTimeline({ serviceHistory }: MembershipTimelin
   }
 
   // Hitta första och sista datum från alla tjänster
+  // Viktigt: För aktiva tjänster, använd bara dagens datum (inte framtida slutdatum)
+  const now = new Date();
   const allDates = serviceHistory.flatMap(entry => {
     const startDate = new Date(entry.date);
-    const endDate = entry.endDate 
-      ? new Date(entry.endDate) 
-      : (entry.status === 'Aktiv' ? new Date() : startDate);
+    let endDate: Date;
+    
+    if (entry.status === 'Aktiv') {
+      // För aktiva tjänster: använd bara dagens datum (räkna bara faktiska månader hittills)
+      endDate = now;
+    } else if (entry.endDate) {
+      // För avslutade tjänster: använd slutdatum, men max till idag
+      endDate = new Date(entry.endDate);
+      if (endDate > now) {
+        endDate = now; // Om slutdatum är i framtiden, använd idag
+      }
+    } else {
+      // Ingen slutdatum och inte aktiv = engångstjänst
+      endDate = startDate;
+    }
     
     return [startDate, endDate];
   });
@@ -39,7 +53,9 @@ export default function MembershipTimeline({ serviceHistory }: MembershipTimelin
   }
   
   const minDate = new Date(Math.min(...allDates.map(d => d.getTime())));
-  const maxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  // Maxdatum ska aldrig vara i framtiden - använd idag om något datum är framtida
+  const calculatedMaxDate = new Date(Math.max(...allDates.map(d => d.getTime())));
+  const maxDate = calculatedMaxDate > now ? now : calculatedMaxDate;
 
   // Skapa en array av alla månader mellan första och sista
   const months = eachMonthOfInterval({ start: minDate, end: maxDate });
@@ -50,11 +66,19 @@ export default function MembershipTimeline({ serviceHistory }: MembershipTimelin
       const startDate = new Date(entry.date);
       startDate.setHours(0, 0, 0, 0);
       
-      // För aktiva tjänster: använd dagens datum som slutdatum
-      // För avslutade/pausade: använd endDate om det finns, annars startDate (engångstjänst)
-      const endDate = entry.endDate 
-        ? new Date(entry.endDate) 
-        : (entry.status === 'Aktiv' ? new Date() : startDate);
+      // För aktiva tjänster: använd bara dagens datum (räkna bara faktiska månader hittills)
+      // För avslutade/pausade: använd endDate om det finns, men max till idag
+      let endDate: Date;
+      if (entry.status === 'Aktiv') {
+        endDate = new Date(); // Använd bara idag, inte framtida slutdatum
+      } else if (entry.endDate) {
+        endDate = new Date(entry.endDate);
+        if (endDate > now) {
+          endDate = now; // Om slutdatum är i framtiden, använd idag
+        }
+      } else {
+        endDate = startDate; // Engångstjänst
+      }
       endDate.setHours(23, 59, 59, 999);
       
       // Kolla om denna månad är mellan start och slut
@@ -90,7 +114,13 @@ export default function MembershipTimeline({ serviceHistory }: MembershipTimelin
     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
       <h3 className="text-lg font-semibold text-gray-900 mb-2">Medlemskapstidslinje</h3>
       <p className="text-sm text-gray-600 mb-4">
-        Visar tjänster över tid • Totalt: <span className="font-semibold">{months.length} månader</span>
+        Visar tjänster över tid • Totalt: <span className="font-semibold">
+          {(() => {
+            // Räkna bara faktiska månader där kunden har varit aktiv
+            const activeMonths = monthlyData.filter(data => data.hasService).length;
+            return activeMonths;
+          })()} månader
+        </span>
       </p>
 
       {/* Diagrammet */}

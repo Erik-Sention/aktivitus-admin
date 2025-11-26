@@ -128,7 +128,9 @@ export const login = async (email: string, password: string) => {
   } catch (error: any) {
     // Om Firebase ger fel (t.ex. ogiltig API-nyckel), fallback till mock-auth
     if (error.code?.includes('api-key') || error.code?.includes('auth')) {
-      console.warn('Firebase-auth misslyckades, använder mock-auth istället');
+      if (process.env.NODE_ENV === 'development') {
+        // Firebase-auth misslyckades, använder mock-auth istället
+      }
       
       const inputEmail = email.toLowerCase().trim();
       const mockUsername = MOCK_USERNAME.toLowerCase().trim();

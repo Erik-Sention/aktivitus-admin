@@ -43,7 +43,6 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         // Om Firebase inte är konfigurerat eller misslyckas, använd mockdata
-        console.warn('Kunde inte ladda från Firebase, använder mockdata:', error);
         if (mockCustomers.length > 0) {
           setCustomers(mockCustomers);
         }
@@ -80,7 +79,6 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       
       // State uppdateras automatiskt via subscribeToCustomers listener
     } catch (error) {
-      console.error('Fel vid sparande till Firebase:', error);
       throw error; // Kasta vidare så att UI kan hantera felet
     }
   };
@@ -99,7 +97,6 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       
       // State uppdateras automatiskt via subscribeToCustomers listener
     } catch (error) {
-      console.error('Fel vid uppdatering i Firebase:', error);
       throw error; // Kasta vidare så att UI kan hantera felet
     }
   };
@@ -117,7 +114,6 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       
       // State uppdateras automatiskt via subscribeToCustomers listener
     } catch (error) {
-      console.error('Fel vid borttagning från Firebase:', error);
       throw error; // Kasta vidare så att UI kan hantera felet
     }
   };
@@ -190,7 +186,27 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     
     const totalMembers = filteredCustomers.length;
     const activeMembers = filteredCustomers.filter((c) => c.status === 'Aktiv').length;
-    const totalTests = filteredCustomers.filter((c) => testServices.includes(c.service)).length;
+    
+    // Räkna tester från både huvudtjänst och serviceHistory
+    const totalTests = filteredCustomers.reduce((count, customer) => {
+      let testCount = 0;
+      
+      // Kolla huvudtjänsten
+      if (testServices.includes(customer.service)) {
+        testCount++;
+      }
+      
+      // Kolla serviceHistory för tester
+      if (customer.serviceHistory && customer.serviceHistory.length > 0) {
+        customer.serviceHistory.forEach((serviceEntry) => {
+          if (testServices.includes(serviceEntry.service) && serviceEntry.status === 'Genomförd') {
+            testCount++;
+          }
+        });
+      }
+      
+      return count + testCount;
+    }, 0);
 
     // Beräkna medlemmar per plats
     const membersByPlace = filteredCustomers.reduce((acc, customer) => {

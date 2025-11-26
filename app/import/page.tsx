@@ -308,8 +308,8 @@ Genomgång eller testdel utförd till någon annan - Plus 30 min tid,0,other,Gen
               </p>
               <button
                 onClick={async () => {
-                  const count = prompt('Hur många kunder vill du generera? (Standard: 200)', '200');
-                  const numCount = count ? parseInt(count, 10) : 200;
+                  const count = prompt('Hur många kunder vill du generera? (Standard: 100)', '100');
+                  const numCount = count ? parseInt(count, 10) : 100;
                   
                   if (isNaN(numCount) || numCount < 1) {
                     alert('Ogiltigt antal. Använd ett positivt heltal.');

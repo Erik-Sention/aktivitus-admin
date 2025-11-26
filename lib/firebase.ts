@@ -13,15 +13,7 @@ const firebaseConfig = {
   databaseURL: process.env.NEXT_PUBLIC_FIREBASE_DATABASE_URL || 'https://aktivitus-admin-default-rtdb.europe-west1.firebasedatabase.app',
 };
 
-// Logga Firebase-konfiguration i development (inte i production)
-if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-  console.log('Firebase Config:', {
-    apiKey: firebaseConfig.apiKey?.substring(0, 20) + '...',
-    databaseURL: firebaseConfig.databaseURL,
-    projectId: firebaseConfig.projectId,
-    isConfigured: firebaseConfig.apiKey !== 'demo-api-key' && !firebaseConfig.apiKey.includes('demo'),
-  });
-}
+// Firebase-konfiguration loggas inte av säkerhetsskäl
 
 // Initialize Firebase
 let app: FirebaseApp;
@@ -34,17 +26,14 @@ try {
     db = getDatabase(app);
     auth = getAuth(app);
     
-    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-      console.log('✅ Firebase initialized successfully');
-      console.log('Database URL:', firebaseConfig.databaseURL);
-    }
+    // Firebase-initialisering loggas inte av säkerhetsskäl
   } else {
     app = getApps()[0];
     db = getDatabase(app);
     auth = getAuth(app);
   }
 } catch (error) {
-  console.error('❌ Firebase initialization error:', error);
+  // Logga inte felmeddelanden som kan avslöja databasinformation
   throw error;
 }
 

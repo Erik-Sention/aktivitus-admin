@@ -57,7 +57,7 @@ const servicesData: Array<{ service: string; basePrice: number; category: string
   { service: 'Membership Aktivitus Iform Tillägg till MS 4 mån', basePrice: 1748, category: 'membership', description: 'Iform tillägg till Membership Standard 4 månader', timeBudget: TIME_BUDGETS['Membership Aktivitus Iform Tillägg till MS 4 mån'] },
   { service: 'Membership Iform Extra månad', basePrice: 499, category: 'membership', description: 'Iform extra månad', timeBudget: TIME_BUDGETS['Membership Iform Extra månad'] },
   { service: 'Membership Aktivitus Iform Fortsättning', basePrice: 990, category: 'membership', description: 'Iform fortsättning', timeBudget: TIME_BUDGETS['Membership Aktivitus Iform Fortsättning'] },
-  { service: 'Membership BAS', basePrice: 995, category: 'membership', description: 'BAS medlemskap', timeBudget: TIME_BUDGETS['Membership BAS'] },
+  { service: 'Membership BAS', basePrice: 250, category: 'membership', description: 'BAS medlemskap', timeBudget: TIME_BUDGETS['Membership BAS'] },
   { service: 'Membership Avslut NOTERA SLUTDATUM', basePrice: 0, category: 'membership', description: 'Medlemskap avslut - notera slutdatum', timeBudget: TIME_BUDGETS['Membership Avslut NOTERA SLUTDATUM'] },
   { service: 'Save - Samtal - Standard', basePrice: 0, category: 'membership', description: 'Save samtal standard', timeBudget: TIME_BUDGETS['Save - Samtal - Standard'] },
   { service: 'Membership Utan tester', basePrice: 1595, category: 'membership', description: 'Medlemskap utan tester', timeBudget: TIME_BUDGETS['Membership Utan tester'] },
@@ -135,10 +135,8 @@ export const seedCoachesToFirebase = async (): Promise<{ success: number; errors
 
         await set(ref(db, `coachProfiles/${profile.name}`), cleanedProfile);
         success++;
-        console.log(`✅ Sparade coach: ${profile.name}`);
       } catch (error: any) {
         errors.push(`Fel vid sparande av ${coach.name}: ${error.message}`);
-        console.error(`❌ Fel vid sparande av ${coach.name}:`, error);
       }
     }
   } catch (error: any) {
@@ -174,10 +172,8 @@ export const seedServicesToFirebase = async (): Promise<{ success: number; error
         
         await set(ref(db, `services/${serviceKey}`), serviceDataToSave);
         success++;
-        console.log(`✅ Sparade tjänst: ${service.service} (${service.basePrice} kr, ${service.timeBudget !== undefined ? service.timeBudget + 'h' : 'ingen tidsbudget'})`);
       } catch (error: any) {
         errors.push(`Fel vid sparande av ${service.service}: ${error.message}`);
-        console.error(`❌ Fel vid sparande av ${service.service}:`, error);
       }
     }
   } catch (error: any) {
@@ -189,12 +185,8 @@ export const seedServicesToFirebase = async (): Promise<{ success: number; error
 
 // Seed allt till Firebase
 export const seedAllToFirebase = async (): Promise<{ coaches: { success: number; errors: string[] }; services: { success: number; errors: string[] } }> => {
-  console.log('🚀 Börjar seeda coacher och tjänster till Firebase...');
-  
   const coachesResult = await seedCoachesToFirebase();
   const servicesResult = await seedServicesToFirebase();
-  
-  console.log(`✅ Klar! Coacher: ${coachesResult.success}/${coachData.length}, Tjänster: ${servicesResult.success}/${servicesData.length}`);
   
   return {
     coaches: coachesResult,

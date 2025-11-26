@@ -7,14 +7,27 @@ import { useCustomers } from '@/lib/CustomerContext';
 import { Customer } from '@/types';
 import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS, INVOICE_STATUSES, BILLING_INTERVALS, calculatePrice, isTestService, isMembershipService, getTestType } from '@/lib/constants';
 import { Save, X, Plus, Trash2, Edit2, Copy } from 'lucide-react';
-import { format } from 'date-fns';
+import { format, endOfMonth, addMonths } from 'date-fns';
 import { sv } from 'date-fns/locale';
+
+// Funktion för att beräkna uppsägningstid baserat på medlemskapstyp
+const getNoticePeriodMonths = (serviceType: string): number => {
+  if (serviceType.includes('Standard')) {
+    return 4; // 4 månader för Standard
+  } else if (serviceType.includes('Premium')) {
+    return 2; // 2 månader för Premium
+  } else if (serviceType.includes('Supreme')) {
+    return 1; // 1 månad för Supreme
+  }
+  return 0; // Ingen uppsägningstid för andra typer
+};
 import { SERVICE_COLORS } from '@/lib/constants';
 import { ServiceEntry } from '@/types';
 import MembershipTimeline from '@/components/MembershipTimeline';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
 import { getCoachProfileSync } from '@/lib/coachProfiles';
 import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } from '@/lib/realtimeDatabase';
+import { getUserRoleSync } from '@/lib/auth';
 
 export default function EditCustomerPage() {
   const router = useRouter();
@@ -31,6 +44,8 @@ export default function EditCustomerPage() {
   const [justSaved, setJustSaved] = useState(false);
 
   const defaultPrice = calculatePrice('Membership Standard', 'Löpning', false);
+  const userRole = getUserRoleSync();
+  const canDeleteServices = userRole === 'admin' || userRole === 'superuser';
   
   const [newService, setNewService] = useState<{
     service: string;
@@ -76,6 +91,7 @@ export default function EditCustomerPage() {
   });
 
   const [editingService, setEditingService] = useState<string | null>(null);
+  const [overrideNoticePeriod, setOverrideNoticePeriod] = useState(false);
   const [editedServiceData, setEditedServiceData] = useState<any>(null);
 
   // Ladda tjänster från Firebase
@@ -312,7 +328,10 @@ export default function EditCustomerPage() {
       invoiceStatus: newService.invoiceStatus as any,
       billingInterval: newService.billingInterval as any,
       numberOfMonths: newService.numberOfMonths || undefined,
-      nextInvoiceDate: newService.nextInvoiceDate ? new Date(newService.nextInvoiceDate) : undefined,
+      // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+      nextInvoiceDate: newService.nextInvoiceDate 
+        ? new Date(newService.nextInvoiceDate) 
+        : (newService.billingInterval === 'Månadsvis' ? endOfMonth(new Date(newService.date)) : undefined),
       paidUntil: newService.paidUntil ? new Date(newService.paidUntil) : undefined,
       invoiceReference: newService.invoiceReference || undefined,
       invoiceNote: newService.invoiceNote || undefined,
@@ -397,6 +416,7 @@ export default function EditCustomerPage() {
 
   const handleEditService = (entry: ServiceEntry) => {
     setEditingService(entry.id);
+    setOverrideNoticePeriod(false); // Reset override när man börjar redigera
     
     // Beräkna originalPrice korrekt - om det saknas och det finns en rabatt, beräkna tillbaka
     let originalPrice = entry.originalPrice;
@@ -411,10 +431,16 @@ export default function EditCustomerPage() {
       originalPrice = entry.price;
     }
     
+    // Om status är "Genomförd" och inget slutdatum finns, sätt det till startdatum
+    const entryStartDate = format(new Date(entry.date), 'yyyy-MM-dd');
+    const entryEndDate = entry.endDate 
+      ? format(new Date(entry.endDate), 'yyyy-MM-dd') 
+      : (entry.status === 'Genomförd' ? entryStartDate : '');
+    
     setEditedServiceData({
       ...entry,
-      date: format(new Date(entry.date), 'yyyy-MM-dd'),
-      endDate: entry.endDate ? format(new Date(entry.endDate), 'yyyy-MM-dd') : '',
+      date: entryStartDate,
+      endDate: entryEndDate,
       nextInvoiceDate: entry.nextInvoiceDate ? format(new Date(entry.nextInvoiceDate), 'yyyy-MM-dd') : '',
       paidUntil: entry.paidUntil ? format(new Date(entry.paidUntil), 'yyyy-MM-dd') : '',
       originalPrice: originalPrice,
@@ -502,7 +528,10 @@ export default function EditCustomerPage() {
             invoiceStatus: editedServiceData.invoiceStatus,
             billingInterval: editedServiceData.billingInterval,
             numberOfMonths: editedServiceData.numberOfMonths || undefined,
-            nextInvoiceDate: editedServiceData.nextInvoiceDate ? new Date(editedServiceData.nextInvoiceDate) : undefined,
+            // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+            nextInvoiceDate: editedServiceData.nextInvoiceDate 
+              ? new Date(editedServiceData.nextInvoiceDate) 
+              : (editedServiceData.billingInterval === 'Månadsvis' ? endOfMonth(new Date(editedServiceData.date)) : undefined),
             paidUntil: editedServiceData.paidUntil ? new Date(editedServiceData.paidUntil) : undefined,
             invoiceReference: editedServiceData.invoiceReference || undefined,
             invoiceNote: editedServiceData.invoiceNote || undefined,
@@ -540,6 +569,12 @@ export default function EditCustomerPage() {
   };
 
   const handleDeleteService = (id: string) => {
+    // Kontrollera att användaren har rätt att ta bort tjänster
+    if (!canDeleteServices) {
+      alert('Du har inte behörighet att ta bort tjänster');
+      return;
+    }
+    
     if (confirm('Är du säker på att du vill ta bort denna tjänst?')) {
       const updatedHistory = serviceHistory.filter((s) => s.id !== id);
       setServiceHistory(updatedHistory);
@@ -628,7 +663,10 @@ export default function EditCustomerPage() {
               invoiceStatus: editedServiceData.invoiceStatus,
               billingInterval: editedServiceData.billingInterval,
               numberOfMonths: editedServiceData.numberOfMonths || undefined,
-              nextInvoiceDate: editedServiceData.nextInvoiceDate ? new Date(editedServiceData.nextInvoiceDate) : undefined,
+              // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+              nextInvoiceDate: editedServiceData.nextInvoiceDate 
+                ? new Date(editedServiceData.nextInvoiceDate) 
+                : (editedServiceData.billingInterval === 'Månadsvis' ? endOfMonth(new Date(editedServiceData.date)) : undefined),
               paidUntil: editedServiceData.paidUntil ? new Date(editedServiceData.paidUntil) : undefined,
               invoiceReference: editedServiceData.invoiceReference || undefined,
               invoiceNote: editedServiceData.invoiceNote || undefined,
@@ -950,12 +988,13 @@ export default function EditCustomerPage() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-900 mb-2">
-                      Gren {isMembershipService(newService.service) && <span className="text-red-500">*</span>}
+                      Gren <span className="text-red-500">*</span>
                     </label>
                     <select
                       value={newService.sport}
                       onChange={(e) => handleSportChangeForNewService(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      required
                     >
                       {SPORTS.map((sport) => (
                         <option key={sport} value={sport}>
@@ -963,7 +1002,7 @@ export default function EditCustomerPage() {
                         </option>
                       ))}
                     </select>
-                    {newService.sport && getTestType(newService.service as any, newService.sport as any) && (
+                    {isTestService(newService.service) && newService.sport && newService.sport !== 'Ospecificerat' && (
                       <p className="mt-1 text-xs text-gray-600">
                         <span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-medium">
                           {getTestType(newService.service as any, newService.sport as any)}
@@ -1085,8 +1124,13 @@ export default function EditCustomerPage() {
                     <input
                       type="date"
                       value={newService.date}
-                      onChange={(e) => setNewService({ ...newService, date: e.target.value })}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      onChange={(e) => {
+                        const newDate = e.target.value;
+                        // Om status är "Genomförd", uppdatera också slutdatum automatiskt
+                        const updatedEndDate = newService.status === 'Genomförd' ? newDate : newService.endDate;
+                        setNewService({ ...newService, date: newDate, endDate: updatedEndDate });
+                      }}
+                      className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                     />
                   </div>
 
@@ -1304,24 +1348,26 @@ export default function EditCustomerPage() {
                         {/* Gren */}
                         <div>
                           <label className="block text-sm font-medium text-gray-900 mb-1">
-                            Gren {isMembershipService(editedServiceData.service) && <span className="text-red-500">*</span>}
+                            Gren <span className="text-red-500">*</span>
                           </label>
-                          {isMembershipService(editedServiceData.service) ? (
-                            <select
-                              value={editedServiceData.sport || ''}
-                              onChange={(e) => setEditedServiceData({ ...editedServiceData, sport: e.target.value as any })}
-                              className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                            >
-                              {SPORTS.map((sport) => (
-                                <option key={sport} value={sport}>
-                                  {sport}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <div className="px-3 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-600 italic">
-                              {getTestType(editedServiceData.service as any, editedServiceData.sport || 'Löpning')}
-                            </div>
+                          <select
+                            value={editedServiceData.sport || ''}
+                            onChange={(e) => setEditedServiceData({ ...editedServiceData, sport: e.target.value as any })}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                            required
+                          >
+                            {SPORTS.map((sport) => (
+                              <option key={sport} value={sport}>
+                                {sport}
+                              </option>
+                            ))}
+                          </select>
+                          {isTestService(editedServiceData.service) && editedServiceData.sport && editedServiceData.sport !== 'Ospecificerat' && (
+                            <p className="mt-1 text-xs text-gray-600">
+                              <span className="inline-flex items-center px-2 py-1 rounded bg-blue-100 text-blue-800 font-medium">
+                                {getTestType(editedServiceData.service as any, editedServiceData.sport as any)}
+                              </span>
+                            </p>
                           )}
                         </div>
 
@@ -1375,7 +1421,12 @@ export default function EditCustomerPage() {
                           <input
                             type="date"
                             value={editedServiceData.date}
-                            onChange={(e) => setEditedServiceData({ ...editedServiceData, date: e.target.value })}
+                            onChange={(e) => {
+                              const newDate = e.target.value;
+                              // Om status är "Genomförd", uppdatera också slutdatum automatiskt
+                              const updatedEndDate = editedServiceData.status === 'Genomförd' ? newDate : editedServiceData.endDate;
+                              setEditedServiceData({ ...editedServiceData, date: newDate, endDate: updatedEndDate });
+                            }}
                             className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                           />
                         </div>
@@ -1387,11 +1438,30 @@ export default function EditCustomerPage() {
                             value={editedServiceData.status}
                             onChange={(e) => {
                               const newStatus = e.target.value as any;
+                              const oldStatus = editedServiceData.status;
                               let updatedEndDate = editedServiceData.endDate;
+                              
                               // Om status ändras till "Genomförd", sätt slutdatum till startdatum
                               if (newStatus === 'Genomförd') {
                                 updatedEndDate = editedServiceData.date;
+                                setOverrideNoticePeriod(false);
+                              } 
+                              // Om status ändras från "Aktiv" till "Inaktiv" eller "Pausad" för ett membership
+                              else if (oldStatus === 'Aktiv' && (newStatus === 'Inaktiv' || newStatus === 'Pausad')) {
+                                if (isMembershipService(editedServiceData.service) && !overrideNoticePeriod) {
+                                  const noticeMonths = getNoticePeriodMonths(editedServiceData.service);
+                                  if (noticeMonths > 0) {
+                                    const startDate = new Date(editedServiceData.date);
+                                    const endDate = addMonths(startDate, noticeMonths);
+                                    updatedEndDate = format(endOfMonth(endDate), 'yyyy-MM-dd');
+                                  }
+                                }
                               }
+                              // Om status ändras tillbaka till "Aktiv", rensa uppsägningstidsöverstyrning
+                              else if (newStatus === 'Aktiv') {
+                                setOverrideNoticePeriod(false);
+                              }
+                              
                               setEditedServiceData({ ...editedServiceData, status: newStatus, endDate: updatedEndDate });
                             }}
                             className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
@@ -1414,10 +1484,7 @@ export default function EditCustomerPage() {
                             type="date"
                             value={editedServiceData.endDate || ''}
                             onChange={(e) => setEditedServiceData({ ...editedServiceData, endDate: e.target.value })}
-                            disabled={editedServiceData.status === 'Genomförd'}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
-                              editedServiceData.status === 'Genomförd' ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
-                            }`}
+                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                             required={editedServiceData.status !== 'Aktiv'}
                           />
                           {editedServiceData.status === 'Aktiv' && (
@@ -1841,7 +1908,7 @@ export default function EditCustomerPage() {
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {serviceHistory.length > 1 && (
+                        {serviceHistory.length > 1 && canDeleteServices && (
                           <button
                             onClick={() => handleDeleteService(entry.id)}
                             className="text-red-600 hover:text-red-900 p-2 hover:bg-red-50 rounded transition"

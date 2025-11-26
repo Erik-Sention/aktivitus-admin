@@ -34,36 +34,38 @@ export default function AdministrativeHoursPage() {
   const user = getCurrentUser();
   const userEmail = user?.email || 'unknown';
   const userRole = getUserRoleSync();
+  const [userProfile, setUserProfile] = useState<any>(null);
 
-  // Hämta coach-namn från email (för coacher)
-  const getCoachNameFromEmail = (email: string): string | null => {
-    if (!email) return null;
-    
-    // Ta bort @ och allt efter
-    const namePart = email.split('@')[0].toLowerCase();
-    
-    // Försök hitta matchande coach i kunddata
-    const allCoaches = getAllCoachesFromCustomers(customers);
-    const matchingCoach = allCoaches.find(coach => {
-      const coachLower = coach.toLowerCase();
-      const firstName = coachLower.split(' ')[0];
-      return firstName === namePart || coachLower.includes(namePart);
-    });
-    
-    return matchingCoach || null;
-  };
+  // Hämta användarprofil för att få linkedCoach
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (userEmail && userEmail !== 'unknown') {
+        const { getUserProfile } = await import('@/lib/userProfile');
+        const profile = await getUserProfile(userEmail);
+        setUserProfile(profile);
+      }
+    };
+    loadUserProfile();
+  }, [userEmail]);
 
-  // Bestäm om coach-dropdown ska vara låst
-  const isCoachLocked = userRole === 'coach';
-  const defaultCoachName = isCoachLocked ? getCoachNameFromEmail(userEmail) : null;
+  // Bestäm om coach-dropdown ska vara låst (coach och platschef ser bara sina egna)
+  const isCoachLocked = userRole === 'coach' || userRole === 'platschef';
+  const defaultCoachName = isCoachLocked ? (userProfile?.linkedCoach || null) : null;
 
   const [selectedMonth, setSelectedMonth] = useState<string>(
     new Date().toISOString().slice(0, 7)
   );
-  const [selectedCoach, setSelectedCoach] = useState<string>(defaultCoachName || '');
+  const [selectedCoach, setSelectedCoach] = useState<string>('');
   const [adminHours, setAdminHours] = useState<AdministrativeHour[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Uppdatera selectedCoach när userProfile laddas
+  useEffect(() => {
+    if (isCoachLocked && defaultCoachName && !selectedCoach) {
+      setSelectedCoach(defaultCoachName);
+    }
+  }, [isCoachLocked, defaultCoachName, selectedCoach]);
 
   // Formulärdata
   const [formData, setFormData] = useState({
@@ -74,11 +76,11 @@ export default function AdministrativeHoursPage() {
     category: 'Annat' as AdministrativeCategory,
   });
 
-  // Hämta alla coacher (filtrera för platschefer om nödvändigt)
+  // Hämta alla coacher (filtrera för platschefer och coacher om nödvändigt)
   const allCoaches = useMemo(() => {
     const coaches = getAllCoachesFromCustomers(customers);
     
-    // Om användaren är coach, visa bara deras eget namn
+    // Om användaren är coach eller platschef, visa bara deras eget namn
     if (isCoachLocked && defaultCoachName) {
       return [defaultCoachName];
     }
@@ -115,7 +117,7 @@ export default function AdministrativeHoursPage() {
   const filteredHours = useMemo(() => {
     let filtered = adminHours;
 
-    // Om användaren är coach, visa endast deras egna timmar
+    // Om användaren är coach eller platschef, visa endast deras egna timmar
     if (isCoachLocked && defaultCoachName) {
       filtered = filtered.filter(h => h.coachName === defaultCoachName);
     } else if (selectedCoach) {
@@ -174,7 +176,7 @@ export default function AdministrativeHoursPage() {
   };
 
   const handleEdit = (hour: AdministrativeHour) => {
-    // Om användaren är coach, kontrollera att de bara kan redigera sina egna timmar
+    // Om användaren är coach eller platschef, kontrollera att de bara kan redigera sina egna timmar
     if (isCoachLocked && hour.coachName !== defaultCoachName) {
       alert('Du kan endast redigera dina egna administrativa timmar');
       return;
@@ -239,7 +241,7 @@ export default function AdministrativeHoursPage() {
   const handleDelete = async (id: string) => {
     if (!confirm('Är du säker på att du vill ta bort denna registrering?')) return;
 
-    // Om användaren är coach, kontrollera att de bara kan ta bort sina egna timmar
+    // Om användaren är coach eller platschef, kontrollera att de bara kan ta bort sina egna timmar
     const hourToDelete = adminHours.find(h => h.id === id);
     if (isCoachLocked && hourToDelete && hourToDelete.coachName !== defaultCoachName) {
       alert('Du kan endast ta bort dina egna administrativa timmar');
@@ -368,7 +370,7 @@ export default function AdministrativeHoursPage() {
               )}
               {isCoachLocked && (
                 <p className="mt-1 text-xs text-gray-500">
-                  Du kan endast registrera timmar för dig själv
+                  {userRole === 'coach' ? 'Du kan endast registrera timmar för dig själv' : 'Du kan endast registrera timmar för dig själv'}
                 </p>
               )}
             </div>

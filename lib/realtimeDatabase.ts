@@ -4,11 +4,15 @@ import { db } from './firebase';
 import { Customer, FormData } from '@/types';
 import { CoachProfile } from './coachProfiles';
 import { AdministrativeHour, AdministrativeCategory } from '@/types/administrativeHours';
+import { Purchase, PurchaseCategory, PurchaseStatus, StatusHistoryEntry } from '@/types/purchases';
+import { UserProfile } from '@/types/userProfile';
 import { PaymentStatus } from '@/types';
 
 const CUSTOMERS_PATH = 'customers';
 const COACH_PROFILES_PATH = 'coachProfiles';
 const ADMINISTRATIVE_HOURS_PATH = 'administrativeHours';
+const PURCHASES_PATH = 'purchases';
+const USER_PROFILES_PATH = 'userProfiles';
 const PAYMENT_STATUSES_PATH = 'paymentStatuses';
 
 // Hjälpfunktion för att ta bort undefined värden från objekt (Firebase tillåter inte undefined)
@@ -681,6 +685,272 @@ export const subscribeToAdministrativeHours = (
   
   return () => {
     off(hoursRef, 'value', unsubscribe);
+  };
+};
+
+// ==================== PURCHASES ====================
+
+// Konvertera snapshot till Purchase objekt
+const snapshotToPurchase = (id: string, snapshot: DataSnapshot): Purchase => {
+  const data = snapshot.val();
+  return {
+    id,
+    date: data.date ? new Date(data.date) : new Date(),
+    createdBy: data.createdBy || 'unknown',
+    createdByName: data.createdByName,
+    category: data.category || 'Övrigt',
+    product: data.product || '',
+    priority: data.priority || 1,
+    location: data.location,
+    estimatedCost: data.estimatedCost,
+    actualCost: data.actualCost,
+    status: data.status || 'Väntar',
+    statusHistory: data.statusHistory ? data.statusHistory.map((entry: any) => ({
+      status: entry.status,
+      changedBy: entry.changedBy,
+      changedByEmail: entry.changedByEmail,
+      changedAt: new Date(entry.changedAt),
+    })) : [],
+    notes: data.notes,
+    supplier: data.supplier,
+    costCenter: data.costCenter,
+    approvedBy: data.approvedBy,
+    expectedDeliveryDate: data.expectedDeliveryDate ? new Date(data.expectedDeliveryDate) : undefined,
+    receiptReceived: data.receiptReceived || false,
+    createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+  };
+};
+
+// Hämta alla inköp
+export const getAllPurchases = async (): Promise<Purchase[]> => {
+  try {
+    const purchasesRef = ref(db, PURCHASES_PATH);
+    const snapshot = await get(purchasesRef);
+    
+    if (!snapshot.exists()) {
+      return [];
+    }
+    
+    const purchases: Purchase[] = [];
+    snapshot.forEach((childSnapshot) => {
+      const purchase = snapshotToPurchase(childSnapshot.key || '', childSnapshot);
+      purchases.push(purchase);
+    });
+    
+    return purchases;
+  } catch (error) {
+    console.error('Error fetching purchases:', error);
+    return [];
+  }
+};
+
+// Lägg till inköp
+export const addPurchase = async (
+  date: Date,
+  createdBy: string,
+  createdByName: string,
+  category: PurchaseCategory,
+  product: string,
+  priority: 1 | 2 | 3 | 4,
+  location?: string,
+  estimatedCost?: number,
+  notes?: string,
+  status: PurchaseStatus = 'Väntar',
+  supplier?: string,
+  costCenter?: string,
+  approvedBy?: string,
+  expectedDeliveryDate?: Date,
+  receiptReceived?: boolean
+): Promise<string> => {
+  try {
+    const purchasesRef = ref(db, PURCHASES_PATH);
+    const newPurchaseRef = push(purchasesRef);
+    
+    // Skapa initial statushistorik
+    const initialStatusHistory: StatusHistoryEntry[] = [{
+      status,
+      changedBy: createdByName,
+      changedByEmail: createdBy,
+      changedAt: new Date(),
+    }];
+
+    const purchaseData = removeUndefined({
+      date: date.toISOString(),
+      createdBy,
+      createdByName,
+      category,
+      product,
+      priority,
+      location,
+      estimatedCost,
+      notes,
+      status,
+      statusHistory: initialStatusHistory.map(entry => ({
+        status: entry.status,
+        changedBy: entry.changedBy,
+        changedByEmail: entry.changedByEmail,
+        changedAt: entry.changedAt.toISOString(),
+      })),
+      supplier,
+      costCenter,
+      approvedBy,
+      expectedDeliveryDate: expectedDeliveryDate ? expectedDeliveryDate.toISOString() : undefined,
+      receiptReceived: receiptReceived || false,
+      createdAt: new Date().toISOString(),
+    });
+    
+    await set(newPurchaseRef, purchaseData);
+    return newPurchaseRef.key || '';
+  } catch (error) {
+    console.error('Error adding purchase:', error);
+    throw new Error('Kunde inte lägga till inköp');
+  }
+};
+
+// Uppdatera inköp
+export const updatePurchase = async (
+  id: string,
+  updates: Partial<Omit<Purchase, 'id' | 'createdAt' | 'createdBy'>>
+): Promise<void> => {
+  try {
+    const purchaseRef = ref(db, `${PURCHASES_PATH}/${id}`);
+    
+    const updateData = removeUndefined({
+      ...updates,
+      date: updates.date ? updates.date.toISOString() : undefined,
+      expectedDeliveryDate: updates.expectedDeliveryDate ? updates.expectedDeliveryDate.toISOString() : undefined,
+      statusHistory: updates.statusHistory ? updates.statusHistory.map((entry: StatusHistoryEntry) => ({
+        status: entry.status,
+        changedBy: entry.changedBy,
+        changedByEmail: entry.changedByEmail,
+        changedAt: entry.changedAt.toISOString(),
+      })) : undefined,
+    });
+    
+    await update(purchaseRef, updateData);
+  } catch (error) {
+    console.error('Error updating purchase:', error);
+    throw new Error('Kunde inte uppdatera inköp');
+  }
+};
+
+// Ta bort inköp
+export const deletePurchase = async (id: string): Promise<void> => {
+  try {
+    const purchaseRef = ref(db, `${PURCHASES_PATH}/${id}`);
+    await remove(purchaseRef);
+  } catch (error) {
+    console.error('Error deleting purchase:', error);
+    throw new Error('Kunde inte ta bort inköp');
+  }
+};
+
+// Realtime listener för inköp
+export const subscribeToPurchases = (
+  callback: (purchases: Purchase[]) => void
+): (() => void) => {
+  const purchasesRef = ref(db, PURCHASES_PATH);
+  
+  const unsubscribe = onValue(purchasesRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback([]);
+      return;
+    }
+    
+    const purchases: Purchase[] = [];
+    snapshot.forEach((childSnapshot) => {
+      const purchase = snapshotToPurchase(childSnapshot.key || '', childSnapshot);
+      purchases.push(purchase);
+    });
+    
+    callback(purchases);
+  });
+  
+  return () => {
+    off(purchasesRef, 'value', unsubscribe);
+  };
+};
+
+// ==================== USER PROFILES ====================
+
+// Konvertera snapshot till UserProfile objekt
+const snapshotToUserProfile = (snapshot: DataSnapshot): UserProfile => {
+  const data = snapshot.val();
+  return {
+    email: data.email || '',
+    displayName: data.displayName || '',
+    role: data.role,
+    phone: data.phone,
+    linkedCoach: data.linkedCoach,
+    createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+    updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date(),
+  };
+};
+
+// Hämta användarprofil
+export const getUserProfile = async (email: string): Promise<UserProfile | null> => {
+  try {
+    const emailKey = email.replace(/\./g, '_').replace(/@/g, '_at_');
+    const profileRef = ref(db, `${USER_PROFILES_PATH}/${emailKey}`);
+    const snapshot = await get(profileRef);
+    
+    if (!snapshot.exists()) {
+      return null;
+    }
+    
+    return snapshotToUserProfile(snapshot);
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    return null;
+  }
+};
+
+// Spara användarprofil
+export const saveUserProfile = async (profile: UserProfile): Promise<void> => {
+  try {
+    const emailKey = profile.email.replace(/\./g, '_').replace(/@/g, '_at_');
+    const profileRef = ref(db, `${USER_PROFILES_PATH}/${emailKey}`);
+    
+    const profileData = removeUndefined({
+      email: profile.email,
+      displayName: profile.displayName,
+      role: profile.role,
+      phone: profile.phone,
+      linkedCoach: profile.linkedCoach,
+      createdAt: profile.createdAt.toISOString(),
+      updatedAt: profile.updatedAt.toISOString(),
+    });
+    
+    await set(profileRef, profileData);
+  } catch (error) {
+    console.error('Error saving user profile:', error);
+    throw new Error('Kunde inte spara användarprofil');
+  }
+};
+
+// Realtime listener för användarprofiler
+export const subscribeToUserProfiles = (
+  callback: (profiles: Record<string, UserProfile>) => void
+): (() => void) => {
+  const profilesRef = ref(db, USER_PROFILES_PATH);
+  
+  const unsubscribe = onValue(profilesRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback({});
+      return;
+    }
+    
+    const profiles: Record<string, UserProfile> = {};
+    snapshot.forEach((childSnapshot) => {
+      const profile = snapshotToUserProfile(childSnapshot);
+      profiles[profile.email] = profile;
+    });
+    
+    callback(profiles);
+  });
+  
+  return () => {
+    off(profilesRef, 'value', unsubscribe);
   };
 };
 

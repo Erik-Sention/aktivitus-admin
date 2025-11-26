@@ -7,6 +7,7 @@ import { getTimeBudget } from '@/lib/timeBudgets';
 import { isMembershipService, isTestService, PLACES } from '@/lib/constants';
 import { getCoachHourlyRateSync, getCoachHourlyRate, getCoachProfileSync, getCoachProfile, saveCoachProfile, CoachProfile } from '@/lib/coachProfiles';
 import { getTotalAdministrativeHoursForMonthSync, getAdministrativeHoursForMonthSync } from '@/lib/administrativeHours';
+import { getUserRoleSync } from '@/lib/auth';
 import { Customer, ServiceEntry } from '@/types';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -34,11 +35,26 @@ export default function CoachDetailPage() {
     new Date().toISOString().slice(0, 7)
   );
 
+  // Hämta inloggad användares roll
+  const [currentUserRole, setCurrentUserRole] = useState<string>('coach');
+  const canEditRole = currentUserRole === 'admin' || currentUserRole === 'superuser';
+
   // Ladda coach-profil
   const [profile, setProfile] = useState<CoachProfile | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editedProfile, setEditedProfile] = useState<CoachProfile | null>(null);
   const [isProfileExpanded, setIsProfileExpanded] = useState(false);
+  
+  // Ladda användarens roll
+  useEffect(() => {
+    const loadUserRole = async () => {
+      const role = await import('@/lib/auth').then(m => m.getUserRole());
+      console.log('🔐 Inloggad användares roll:', role);
+      console.log('✏️ Kan redigera roll:', role === 'admin' || role === 'superuser');
+      setCurrentUserRole(role);
+    };
+    loadUserRole();
+  }, []);
   
   useEffect(() => {
     const loadProfile = async () => {
@@ -73,6 +89,34 @@ export default function CoachDetailPage() {
     if (editedProfile) {
       try {
         await saveCoachProfile(editedProfile);
+        
+        // Om rollen har ändrats, uppdatera userProfile i databasen
+        if (editedProfile.role && editedProfile.role !== profile?.role) {
+          console.log('🔄 Uppdaterar roll i databasen...');
+          
+          // Hitta coachens email från profilen
+          const coachEmail = editedProfile.email;
+          
+          if (coachEmail) {
+            try {
+              // Importera updateUserProfile från userProfile (skapar profil om den inte finns)
+              const { updateUserProfile } = await import('@/lib/userProfile');
+              await updateUserProfile(coachEmail, { 
+                role: editedProfile.role,
+                displayName: editedProfile.name
+              });
+              console.log('✅ Roll uppdaterad i databasen:', coachEmail, '→', editedProfile.role);
+              alert(`Roll uppdaterad! ${editedProfile.name} har nu rollen "${editedProfile.role}".`);
+            } catch (error) {
+              console.error('❌ Fel vid uppdatering av roll:', error);
+              alert('Varning: Profilen sparades men rollen kunde inte uppdateras i användarregistret.');
+            }
+          } else {
+            console.warn('⚠️ Ingen email hittades för coachen. Rollen kunde inte uppdateras i userProfiles.');
+            alert('Varning: Lägg till en e-postadress för att rollen ska kunna synkas till användarens konto.');
+          }
+        }
+        
         setProfile(editedProfile);
         setIsEditingProfile(false);
       } catch (error) {
@@ -293,7 +337,16 @@ export default function CoachDetailPage() {
           onClick={() => setIsProfileExpanded(!isProfileExpanded)}
           className="w-full flex items-center justify-between p-6 hover:bg-gray-50 transition cursor-pointer"
         >
-          <h2 className="text-xl font-semibold text-gray-900">Coach-profil och utbetalningsinformation</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold text-gray-900">Coach-profil och utbetalningsinformation</h2>
+            <Link
+              href="/profil"
+              onClick={(e) => e.stopPropagation()}
+              className="text-sm text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline"
+            >
+              (redigera användarinfo)
+            </Link>
+          </div>
           <div className="flex items-center gap-3">
             {!isEditingProfile && (
               <button
@@ -360,6 +413,44 @@ export default function CoachDetailPage() {
               </div>
             )}
           </div>
+
+          {/* Roll - endast redigerbart för admin och superuser */}
+          {canEditRole && (
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Roll
+              </label>
+              {isEditingProfile ? (
+                <div>
+                  <select
+                    value={editedProfile?.role || 'coach'}
+                    onChange={(e) => {
+                      setEditedProfile({ ...editedProfile!, role: e.target.value as any });
+                    }}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#1E5A7D]"
+                  >
+                    <option value="coach">Coach</option>
+                    <option value="platschef">Platschef</option>
+                    <option value="admin">Admin</option>
+                    <option value="superuser">Superuser</option>
+                  </select>
+                  {!editedProfile?.email && (
+                    <p className="mt-1 text-xs text-orange-600">
+                      ⚠️ Lägg till en e-postadress för att rollen ska synkas till användarens konto
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="px-4 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {profile?.role === 'superuser' && 'Superuser'}
+                  {profile?.role === 'admin' && 'Admin'}
+                  {profile?.role === 'platschef' && 'Platschef'}
+                  {profile?.role === 'coach' && 'Coach'}
+                  {!profile?.role && 'Coach'}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Senior Coach */}
           <div>
@@ -780,7 +871,7 @@ export default function CoachDetailPage() {
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-gray-600">Kostnad ({selectedMonth})</p>
+              <p className="text-sm text-gray-600">Bruttolön ({selectedMonth})</p>
               <p className="text-2xl font-bold text-gray-900 mt-1">
                 {monthlyStats.cost.toLocaleString('sv-SE', {
                   style: 'currency',

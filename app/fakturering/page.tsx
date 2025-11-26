@@ -107,7 +107,8 @@ export default function InvoicingPage() {
   const monthEnd = endOfMonth(new Date(year, month - 1, 1));
   const today = new Date();
 
-  // Samla alla membership-tjänster från alla kunder (både aktiva och inaktiva för vald månad)
+  // Samla alla membership-tjänster från alla kunder
+  // Inkluderar: aktiva memberships + memberships under uppsägningstid (med framtida endDate)
   const membershipServices = customers.flatMap((customer) => {
     if (!customer.serviceHistory || customer.serviceHistory.length === 0) return [];
     
@@ -115,12 +116,28 @@ export default function InvoicingPage() {
       .filter((service) => {
         if (!isMembershipService(service.service)) return false;
         
-        // Kolla om tjänsten var aktiv under vald månad
         const serviceStart = new Date(service.date);
-        const serviceEnd = service.endDate ? new Date(service.endDate) : (service.status === 'Aktiv' ? today : new Date(service.date));
+        const serviceEnd = service.endDate ? new Date(service.endDate) : null;
         
-        // Tjänsten ska överlappa med vald månad
-        return serviceStart <= monthEnd && serviceEnd >= monthStart;
+        // Inkludera tjänsten om:
+        // 1. Status är 'Aktiv' (oavsett startdatum)
+        // 2. Tjänsten har ett endDate som är i framtiden eller överlappar med vald månad (uppsägningstid)
+        // 3. Tjänsten överlappade med vald månad (historisk)
+        
+        if (service.status === 'Aktiv') {
+          // Alla aktiva memberships ska visas
+          return true;
+        }
+        
+        if (serviceEnd) {
+          // Om tjänsten har ett slutdatum, inkludera om:
+          // - Slutdatumet är i framtiden (under uppsägningstid), ELLER
+          // - Tjänsten överlappade med vald månad (historisk data)
+          return serviceEnd >= monthStart;
+        }
+        
+        // För andra statusar utan endDate, kolla om de överlappade med vald månad
+        return serviceStart <= monthEnd && serviceStart >= monthStart;
       })
       .map((service) => {
         // Hämta status för vald månad från invoiceHistory
@@ -305,12 +322,13 @@ export default function InvoicingPage() {
               : `[${timestamp}] ${selectedMonth}: ${newStatus}`;
           }
           
-          // Om status är "Betald" för vald månad, uppdatera nästa faktureringsdatum
+          // Om status är "Betald" för vald månad, uppdatera nästa faktureringsdatum till slutet av nästa månad
           // Men bara om vald månad är den senaste månaden med faktura eller senare
           if (newStatus === 'Betald') {
             const [year, month] = selectedMonth.split('-').map(Number);
             const selectedMonthDate = new Date(year, month - 1, 1);
-            const nextMonth = addMonths(selectedMonthDate, 1);
+            // Sätt nästa faktureringsdatum till slutet av nästa månad
+            const nextMonth = endOfMonth(addMonths(selectedMonthDate, 1));
             
             // Uppdatera nästa faktureringsdatum om:
             // 1. Det inte finns något nästa faktureringsdatum, eller

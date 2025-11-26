@@ -36,12 +36,12 @@ interface MockUser {
   role?: UserRole;
 }
 
-// Lokal mock-autentisering
-const MOCK_USERNAME = process.env.NEXT_PUBLIC_MOCK_USERNAME || 'erik';
-const MOCK_PASSWORD = process.env.NEXT_PUBLIC_MOCK_PASSWORD || 'test1234';
+// Lokal mock-autentisering (endast om explicit satt i miljövariabler)
+const MOCK_USERNAME = process.env.NEXT_PUBLIC_MOCK_USERNAME || '';
+const MOCK_PASSWORD = process.env.NEXT_PUBLIC_MOCK_PASSWORD || '';
 const MOCK_USER_KEY = 'mock_user_session';
 
-// Importera rollhantering
+// Importera rollhantering från userProfile
 import { getUserRoleFromEmail } from './userRoles';
 
 const createMockUser = (email: string): MockUser => ({
@@ -228,15 +228,25 @@ export const getUserRole = async (): Promise<UserRole> => {
   const user = getCurrentUser();
   if (!user) return 'coach'; // Standard: begränsad åtkomst
   
-  // För mock users, använd roll från MockUser
+  const email = user.email || '';
+  
+  // 1. Försök hämta från userProfile först (högsta prioritet)
+  try {
+    const { getUserRole: getUserRoleFromProfile } = await import('./userProfile');
+    const profileRole = await getUserRoleFromProfile(email);
+    if (profileRole) {
+      return profileRole;
+    }
+  } catch (error) {
+    console.error('Error fetching role from profile:', error);
+  }
+  
+  // 2. För mock users, använd roll från MockUser
   if ('role' in user && user.role) {
     return user.role;
   }
   
-  // För Firebase users, hämta från custom claims eller user document
-  // TODO: Implementera när Firebase är konfigurerat
-  // För nu, använd e-postadress för att bestämma roll
-  const email = user.email || '';
+  // 3. Fallback: Använd lokal e-postmappning
   return getUserRoleFromEmail(email);
 };
 
@@ -245,9 +255,26 @@ export const getUserRoleSync = (): UserRole => {
   const user = getCurrentUser();
   if (!user) return 'coach';
   
-  // Alltid prioritera miljövariabel om den finns (för lokal testning)
-  // Detta gör att man kan ändra roll utan att behöva logga ut/in
   const email = user.email || '';
+  
+  // Kolla om användaren är superuser från miljövariabel först
+  const superuserEmail = process.env.NEXT_PUBLIC_SUPERUSER_EMAIL;
+  if (superuserEmail && email.toLowerCase() === superuserEmail.toLowerCase()) {
+    return 'superuser';
+  }
+  
+  // 1. Försök hämta från userProfile cache först (högsta prioritet)
+  try {
+    const { getUserRoleSync: getUserRoleSyncFromProfile } = require('./userProfile');
+    const profileRole = getUserRoleSyncFromProfile(email);
+    if (profileRole) {
+      return profileRole;
+    }
+  } catch (error) {
+    console.warn('Could not fetch role from userProfile:', error);
+  }
+  
+  // 2. Fallback till lokal rollmappning
   const roleFromEmail = getUserRoleFromEmail(email);
   
   // Om rollen från e-post/miljövariabel skiljer sig från sparad roll,
@@ -275,6 +302,20 @@ export const onAuthChange = (callback: (user: User | MockUser | null) => void) =
     };
   }
   
-  return onAuthStateChanged(auth, callback);
+  return onAuthStateChanged(auth, async (user) => {
+    // Om användaren loggar in, initiera profil om det behövs
+    if (user && user.email) {
+      // Initiera användarprofil med rätt roll
+      const superuserEmail = process.env.NEXT_PUBLIC_SUPERUSER_EMAIL;
+      const defaultRole = (superuserEmail && user.email.toLowerCase() === superuserEmail.toLowerCase()) 
+        ? 'superuser' 
+        : 'coach';
+      
+      import('./userProfile').then(({ initializeUserProfile }) => {
+        initializeUserProfile(user.email!, defaultRole).catch(console.error);
+      });
+    }
+    callback(user);
+  });
 };
 

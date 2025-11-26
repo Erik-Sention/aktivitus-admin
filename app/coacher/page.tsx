@@ -572,7 +572,7 @@ export default function CoacherPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-gray-600">
                   <DollarSign className="w-4 h-4" />
-                  <span className="text-sm font-medium">Kostnad ({viewMode === 'month' ? selectedMonth : `${startDate} - ${endDate}`})</span>
+                  <span className="text-sm font-medium">Bruttolön ({viewMode === 'month' ? selectedMonth : `${startDate} - ${endDate}`})</span>
                 </div>
                 <span className="text-sm font-bold text-gray-900">
                   {stat.monthlyCost.toLocaleString('sv-SE', {

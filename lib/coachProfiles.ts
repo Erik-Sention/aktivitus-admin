@@ -1,8 +1,10 @@
 // Coach-profil data med utbetalningsinformation
+import { UserRole } from '@/types';
 
 export interface CoachProfile {
   name: string;
   hourlyRate: number;
+  role?: UserRole; // Roll i systemet (superuser, admin, coach, platschef)
   isSeniorCoach?: boolean; // Om coachen är senior coach
   mainPlace?: string; // Huvudort där coachen jobbar
   secondaryPlace?: string; // Sekundär ort om coachen jobbar på fler ställen

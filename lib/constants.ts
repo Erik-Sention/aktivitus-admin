@@ -22,6 +22,7 @@ export const SPORTS: Sport[] = [
   'Swimrun',
   'Klassikern',
   'Multisport',
+  'Ospecificerat',
 ];
 
 export const COACHES: string[] = [
@@ -142,6 +143,7 @@ export const PAYMENT_METHODS: PaymentMethod[] = [
   'Swish',
   'Förskottsbetalning',
   'Klarna',
+  'iZettle',
 ];
 
 export const INVOICE_STATUSES: InvoiceStatus[] = [

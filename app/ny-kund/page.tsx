@@ -10,6 +10,19 @@ import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } f
 import { Save, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCustomers } from '@/lib/CustomerContext';
+import { endOfMonth, addMonths } from 'date-fns';
+
+// Hjälpfunktion för att beräkna slutet av månaden från ett datum
+const getEndOfMonth = (date: Date | string): Date => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return endOfMonth(d);
+};
+
+// Hjälpfunktion för att beräkna slutet av nästa månad
+const getEndOfNextMonth = (date: Date | string): Date => {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return endOfMonth(addMonths(d, 1));
+};
 
 export default function NewCustomerPage() {
   const router = useRouter();
@@ -259,7 +272,10 @@ export default function NewCustomerPage() {
           invoiceStatus: paymentData.invoiceStatus as any,
           billingInterval: paymentData.billingInterval as any,
           numberOfMonths: paymentData.numberOfMonths || undefined,
-          nextInvoiceDate: paymentData.nextInvoiceDate ? new Date(paymentData.nextInvoiceDate) : undefined,
+          // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+          nextInvoiceDate: paymentData.nextInvoiceDate 
+            ? new Date(paymentData.nextInvoiceDate) 
+            : (paymentData.billingInterval === 'Månadsvis' ? getEndOfMonth(formData.date) : undefined),
           paidUntil: paymentData.paidUntil ? new Date(paymentData.paidUntil) : undefined,
           invoiceReference: paymentData.invoiceReference || undefined,
           invoiceNote: paymentData.invoiceNote || undefined,

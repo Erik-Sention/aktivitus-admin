@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { Customer } from '@/types';
 import { getUserRoleSync, getCurrentUser } from '@/lib/auth';
 import { logPageView, logCustomerView } from '@/lib/activityLogger';
+import { getUserProfileSync } from '@/lib/userProfile';
 
 type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'totalRevenue' | 'coach' | 'phone' | 'invoiceStatus' | 'paymentMethod' | 'nextInvoice';
 type SortDirection = 'asc' | 'desc';
@@ -34,6 +35,7 @@ export default function CustomersPage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [userRole, setUserRole] = useState<string>('admin');
   const [userEmail, setUserEmail] = useState<string>('');
+  const [linkedCoach, setLinkedCoach] = useState<string | null>(null);
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   const [showFilterSettings, setShowFilterSettings] = useState(false);
   
@@ -86,6 +88,11 @@ export default function CustomersPage() {
     const currentUser = getCurrentUser();
     if (currentUser?.email) {
       setUserEmail(currentUser.email);
+      // Hämta användarens linkedCoach från profil
+      const userProfile = getUserProfileSync(currentUser.email);
+      if (userProfile?.linkedCoach) {
+        setLinkedCoach(userProfile.linkedCoach);
+      }
     }
     logPageView('Kunder');
   }, []);
@@ -99,35 +106,26 @@ export default function CustomersPage() {
     searchLastName.trim().length >= 2 || 
     searchEmail.trim().length >= 2;
   
-  // Hämta användarens namn från e-post (för att matcha mot coach-fält)
-  const getUserName = (): string => {
-    if (!userEmail) return '';
-    // Ta bort @ och allt efter
-    const namePart = userEmail.split('@')[0];
-    // Konvertera till versaler för matchning (t.ex. "erik" -> "Erik")
-    return namePart.charAt(0).toUpperCase() + namePart.slice(1).toLowerCase();
-  };
-  
   // Kontrollera om användaren är coach för denna kund
   const isUserCoachForCustomer = (customer: Customer): boolean => {
     if (!requiresSearch) return true; // Admin ser alla
     
-    const userName = getUserName();
-    if (!userName) return false;
+    // Använd linkedCoach från användarprofilen om den finns
+    if (linkedCoach) {
+      const customerCoach = customer.coach?.trim() || '';
+      return customerCoach.toLowerCase() === linkedCoach.toLowerCase();
+    }
     
-    // Kolla om användarens namn matchar kundens coach
-    // Matcha både exakt och case-insensitive
+    // Fallback: Försök matcha från email (för bakåtkompatibilitet)
+    if (!userEmail) return false;
+    
+    const namePart = userEmail.split('@')[0].toLowerCase();
     const customerCoach = customer.coach?.trim() || '';
     const coachLower = customerCoach.toLowerCase();
-    const userNameLower = userName.toLowerCase();
     
-    // Matcha om:
-    // 1. Exakt match (case-insensitive)
-    // 2. Coach-namnet innehåller användarnamnet (t.ex. "Erik Helsing" matchar "erik")
-    // 3. Användarnamnet matchar första delen av coach-namnet
-    return coachLower === userNameLower ||
-           coachLower.includes(userNameLower) ||
-           coachLower.split(' ')[0] === userNameLower;
+    // Matcha om coach-namnet innehåller användarnamnet eller första delen matchar
+    return coachLower.includes(namePart) ||
+           coachLower.split(' ')[0] === namePart;
   };
   
   // Hämta användarens egna kunder
@@ -482,34 +480,34 @@ export default function CustomersPage() {
           }
         } else {
           // Bakåtkompatibilitet med gamla sökfälten
-          const nameParts = customer.name.trim().split(/\s+/);
-          const firstName = nameParts[0] || '';
-          const lastName = nameParts.slice(1).join(' ') || '';
-          
-          let matchesSearch = true;
-          
-          // Förnamn: måste börja med söktermen (case-insensitive)
-          if (searchFirstName.trim().length >= 2) {
-            matchesSearch = matchesSearch && firstName.toLowerCase().startsWith(searchFirstName.toLowerCase());
-          }
-          
-          // Efternamn: måste börja med söktermen (case-insensitive)
-          if (searchLastName.trim().length >= 2) {
-            matchesSearch = matchesSearch && lastName.toLowerCase().startsWith(searchLastName.toLowerCase());
-          }
-          
-          // E-post: måste börja med söktermen (case-insensitive)
-          if (searchEmail.trim().length >= 2) {
-            matchesSearch = matchesSearch && customer.email.toLowerCase().startsWith(searchEmail.toLowerCase());
-          }
-          
-          // Om ingen sökning gjorts (admin), visa alla
-          if (searchFirstName.trim().length === 0 && searchLastName.trim().length === 0 && searchEmail.trim().length === 0) {
-            matchesSearch = true;
-          }
-          
-          if (!matchesSearch) {
-            return false;
+        const nameParts = customer.name.trim().split(/\s+/);
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        
+        let matchesSearch = true;
+        
+        // Förnamn: måste börja med söktermen (case-insensitive)
+        if (searchFirstName.trim().length >= 2) {
+          matchesSearch = matchesSearch && firstName.toLowerCase().startsWith(searchFirstName.toLowerCase());
+        }
+        
+        // Efternamn: måste börja med söktermen (case-insensitive)
+        if (searchLastName.trim().length >= 2) {
+          matchesSearch = matchesSearch && lastName.toLowerCase().startsWith(searchLastName.toLowerCase());
+        }
+        
+        // E-post: måste börja med söktermen (case-insensitive)
+        if (searchEmail.trim().length >= 2) {
+          matchesSearch = matchesSearch && customer.email.toLowerCase().startsWith(searchEmail.toLowerCase());
+        }
+        
+        // Om ingen sökning gjorts (admin), visa alla
+        if (searchFirstName.trim().length === 0 && searchLastName.trim().length === 0 && searchEmail.trim().length === 0) {
+          matchesSearch = true;
+        }
+        
+        if (!matchesSearch) {
+          return false;
           }
         }
       }
@@ -736,47 +734,47 @@ export default function CustomersPage() {
               Filter:
             </div>
             {visibleFilters.has('status') && (
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
                 className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
-              >
-                <option value="Alla">Alla statusar</option>
-                <option value="Aktiv">Aktiv</option>
-                <option value="Inaktiv">Inaktiv</option>
-                <option value="Pausad">Pausad</option>
-                <option value="Genomförd">Genomförd</option>
-              </select>
+          >
+            <option value="Alla">Alla statusar</option>
+            <option value="Aktiv">Aktiv</option>
+            <option value="Inaktiv">Inaktiv</option>
+            <option value="Pausad">Pausad</option>
+            <option value="Genomförd">Genomförd</option>
+          </select>
             )}
 
             {visibleFilters.has('place') && (
-              <select
-                value={selectedPlace}
-                onChange={(e) => setSelectedPlace(e.target.value)}
+          <select
+            value={selectedPlace}
+            onChange={(e) => setSelectedPlace(e.target.value)}
                 className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
-              >
-                <option value="Alla">Alla orter</option>
-                {PLACES.map((place) => (
-                  <option key={place} value={place}>
-                    {place}
-                  </option>
-                ))}
-              </select>
+          >
+            <option value="Alla">Alla orter</option>
+            {PLACES.map((place) => (
+              <option key={place} value={place}>
+                {place}
+              </option>
+            ))}
+          </select>
             )}
 
             {visibleFilters.has('service') && (
-              <select
-                value={selectedService}
-                onChange={(e) => setSelectedService(e.target.value)}
+          <select
+            value={selectedService}
+            onChange={(e) => setSelectedService(e.target.value)}
                 className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 bg-white shadow-sm hover:border-gray-400 transition"
-              >
-                <option value="Alla">Alla tjänster</option>
-                {SERVICES.map((service) => (
-                  <option key={service} value={service}>
-                    {service}
-                  </option>
-                ))}
-              </select>
+          >
+            <option value="Alla">Alla tjänster</option>
+            {SERVICES.map((service) => (
+              <option key={service} value={service}>
+                {service}
+              </option>
+            ))}
+          </select>
             )}
 
             {visibleFilters.has('sport') && (
@@ -887,17 +885,17 @@ export default function CustomersPage() {
             </button>
 
             <button className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition text-gray-700 shadow-sm">
-              <Download className="w-5 h-5" />
-              Exportera
-            </button>
+            <Download className="w-5 h-5" />
+            Exportera
+          </button>
 
-            <Link
-              href="/ny-kund"
-              className="flex items-center gap-2 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition font-medium shadow-sm"
-            >
-              + Lägg till kund
-            </Link>
-          </div>
+          <Link
+            href="/ny-kund"
+            className="flex items-center gap-2 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition font-medium shadow-sm"
+          >
+            + Lägg till kund
+          </Link>
+        </div>
         </div>
 
         {/* Filterinställningar - Modal */}
@@ -1085,15 +1083,15 @@ export default function CustomersPage() {
       {userRole === 'admin' && (
         <div className="flex-shrink-0 mb-4">
           <div className="flex items-center gap-4 mb-3">
-            <p className="text-sm text-gray-600">
-              Visar <span className="font-semibold text-gray-900">{filteredAndSortedCustomers.length}</span> av{' '}
-              <span className="font-semibold text-gray-900">{customers.length}</span> kunder
-            </p>
+          <p className="text-sm text-gray-600">
+            Visar <span className="font-semibold text-gray-900">{filteredAndSortedCustomers.length}</span> av{' '}
+            <span className="font-semibold text-gray-900">{customers.length}</span> kunder
+          </p>
           </div>
           
           {/* Insights */}
           {filteredAndSortedCustomers.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
               {(() => {
                 // Beräkna genomsnittlig aktiva månader
                 const activeMonths = filteredAndSortedCustomers
@@ -1122,9 +1120,6 @@ export default function CustomersPage() {
                 // Räkna aktiva kunder
                 const activeCustomers = filteredAndSortedCustomers.filter(c => c.status === 'Aktiv').length;
 
-                // Räkna kunder med aktivt medlemskap
-                const customersWithMembership = filteredAndSortedCustomers.filter(c => hasActiveMembership(c)).length;
-
                 return (
                   <>
                     <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
@@ -1147,10 +1142,6 @@ export default function CustomersPage() {
                       <p className="text-xs text-gray-500 mb-1">Aktiva kunder</p>
                       <p className="text-lg font-semibold text-gray-900">{activeCustomers}</p>
                     </div>
-                    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-                      <p className="text-xs text-gray-500 mb-1">Med aktivt medlemskap</p>
-                      <p className="text-lg font-semibold text-gray-900">{customersWithMembership}</p>
-                    </div>
                   </>
                 );
               })()}
@@ -1169,34 +1160,34 @@ export default function CustomersPage() {
             <thead className="bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
               <tr>
                 {visibleColumns.has('name') && (
-                  <th 
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('name')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Namn
-                      {sortField === 'name' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('name')}
+                >
+                  <div className="flex items-center gap-1">
+                    Namn
+                    {sortField === 'name' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('email') && (
-                  <th 
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('email')}
-                  >
-                    <div className="flex items-center gap-1">
-                      E-post
-                      {sortField === 'email' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('email')}
+                >
+                  <div className="flex items-center gap-1">
+                    E-post
+                    {sortField === 'email' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('phone') && (
                   <th 
@@ -1214,19 +1205,19 @@ export default function CustomersPage() {
                   </th>
                 )}
                 {visibleColumns.has('place') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('place')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Ort
-                      {sortField === 'place' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('place')}
+                >
+                  <div className="flex items-center gap-1">
+                    Ort
+                    {sortField === 'place' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('coach') && (
                   <th 
@@ -1244,49 +1235,49 @@ export default function CustomersPage() {
                   </th>
                 )}
                 {visibleColumns.has('sport') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('sport')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Gren
-                      {sortField === 'sport' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('sport')}
+                >
+                  <div className="flex items-center gap-1">
+                    Gren
+                    {sortField === 'sport' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('service') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('service')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Tjänst
-                      {sortField === 'service' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('service')}
+                >
+                  <div className="flex items-center gap-1">
+                    Tjänst
+                    {sortField === 'service' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('status') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('status')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Status
-                      {sortField === 'status' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('status')}
+                >
+                  <div className="flex items-center gap-1">
+                    Status
+                    {sortField === 'status' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('invoiceStatus') && (
                   <th 
@@ -1334,94 +1325,94 @@ export default function CustomersPage() {
                   </th>
                 )}
                 {visibleColumns.has('serviceCount') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('serviceCount')}
-                  >
-                    <div className="flex items-center gap-1">
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('serviceCount')}
+                >
+                  <div className="flex items-center gap-1">
                       Antal tjänster
-                      {sortField === 'serviceCount' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                    {sortField === 'serviceCount' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('membershipDuration') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('membershipDuration')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Aktiva månader
-                      {sortField === 'membershipDuration' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('membershipDuration')}
+                >
+                  <div className="flex items-center gap-1">
+                    Aktiva månader
+                    {sortField === 'membershipDuration' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('totalMonthsFromStart') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('totalMonthsFromStart')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Månader från start
-                      {sortField === 'totalMonthsFromStart' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('totalMonthsFromStart')}
+                >
+                  <div className="flex items-center gap-1">
+                    Månader från start
+                    {sortField === 'totalMonthsFromStart' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('price') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('price')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Pris
-                      {sortField === 'price' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('price')}
+                >
+                  <div className="flex items-center gap-1">
+                    Pris
+                    {sortField === 'price' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('totalRevenue') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('totalRevenue')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Total omsättning
-                      {sortField === 'totalRevenue' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('totalRevenue')}
+                >
+                  <div className="flex items-center gap-1">
+                    Total omsättning
+                    {sortField === 'totalRevenue' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
                 {visibleColumns.has('date') && (
-                  <th 
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
-                    onClick={() => handleSort('date')}
-                  >
-                    <div className="flex items-center gap-1">
-                      Startdatum
-                      {sortField === 'date' ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
-                      ) : (
-                        <ArrowUpDown className="w-3 h-3 opacity-30" />
-                      )}
-                    </div>
-                  </th>
+                <th 
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition"
+                  onClick={() => handleSort('date')}
+                >
+                  <div className="flex items-center gap-1">
+                    Startdatum
+                    {sortField === 'date' ? (
+                      sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                    ) : (
+                      <ArrowUpDown className="w-3 h-3 opacity-30" />
+                    )}
+                  </div>
+                </th>
                 )}
               </tr>
             </thead>
@@ -1437,24 +1428,24 @@ export default function CustomersPage() {
                 return (
                 <tr key={customer.id} className="hover:bg-gray-50 transition">
                   {visibleColumns.has('name') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <Link
-                        href={`/kunder/${customer.id}`}
-                        className="font-medium text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline text-sm cursor-pointer"
-                      >
-                        {customer.name}
-                      </Link>
-                    </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <Link
+                      href={`/kunder/${customer.id}`}
+                      className="font-medium text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline text-sm cursor-pointer"
+                    >
+                      {customer.name}
+                    </Link>
+                  </td>
                   )}
                   {visibleColumns.has('email') && (
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <Link
-                        href={`/kunder/${customer.id}`}
-                        className="text-sm text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline cursor-pointer"
-                      >
-                        {customer.email}
-                      </Link>
-                    </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <Link
+                      href={`/kunder/${customer.id}`}
+                      className="text-sm text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline cursor-pointer"
+                    >
+                      {customer.email}
+                    </Link>
+                  </td>
                   )}
                   {visibleColumns.has('phone') && (
                     <td className="px-3 py-3 whitespace-nowrap">
@@ -1462,9 +1453,9 @@ export default function CustomersPage() {
                     </td>
                   )}
                   {visibleColumns.has('place') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{customer.place}</div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">{customer.place}</div>
+                  </td>
                   )}
                   {visibleColumns.has('coach') && (
                     <td className="px-3 py-3 whitespace-nowrap">
@@ -1472,32 +1463,32 @@ export default function CustomersPage() {
                     </td>
                   )}
                   {visibleColumns.has('sport') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{customer.sport}</div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">{customer.sport}</div>
+                  </td>
                   )}
                   {visibleColumns.has('service') && (
-                    <td className="px-3 py-3">
-                      <span
-                        className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${
-                          SERVICE_COLORS[priorityService]
-                        } text-white w-fit`}
-                        title={priorityService}
-                      >
-                        {priorityService.length > 25 ? priorityService.substring(0, 25) + '...' : priorityService}
-                      </span>
-                    </td>
+                  <td className="px-3 py-3">
+                    <span
+                      className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${
+                        SERVICE_COLORS[priorityService]
+                      } text-white w-fit`}
+                      title={priorityService}
+                    >
+                      {priorityService.length > 25 ? priorityService.substring(0, 25) + '...' : priorityService}
+                    </span>
+                  </td>
                   )}
                   {visibleColumns.has('status') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <span
-                        className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${getStatusColor(
-                          customer.status
-                        )}`}
-                      >
-                        {customer.status}
-                      </span>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <span
+                      className={`px-2 py-1 inline-flex text-xs leading-4 font-semibold rounded-full ${getStatusColor(
+                        customer.status
+                      )}`}
+                    >
+                      {customer.status}
+                    </span>
+                  </td>
                   )}
                   {visibleColumns.has('invoiceStatus') && (
                     <td className="px-3 py-3 whitespace-nowrap">
@@ -1530,58 +1521,58 @@ export default function CustomersPage() {
                     </td>
                   )}
                   {visibleColumns.has('serviceCount') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 font-medium">{serviceCount}</div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-900 font-medium">{serviceCount}</div>
+                  </td>
                   )}
                   {visibleColumns.has('membershipDuration') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      {membershipDuration !== null ? (
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    {membershipDuration !== null ? (
+                      <div className="text-sm text-gray-900 font-medium">
+                        {membershipDuration}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-400">-</div>
+                    )}
+                  </td>
+                  )}
+                  {visibleColumns.has('totalMonthsFromStart') && (
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    {(() => {
+                      const totalMonths = getTotalMonthsFromStart(customer);
+                      return totalMonths !== null ? (
                         <div className="text-sm text-gray-900 font-medium">
-                          {membershipDuration}
+                          {totalMonths}
                         </div>
                       ) : (
                         <div className="text-sm text-gray-400">-</div>
-                      )}
-                    </td>
-                  )}
-                  {visibleColumns.has('totalMonthsFromStart') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      {(() => {
-                        const totalMonths = getTotalMonthsFromStart(customer);
-                        return totalMonths !== null ? (
-                          <div className="text-sm text-gray-900 font-medium">
-                            {totalMonths}
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-400">-</div>
-                        );
-                      })()}
-                    </td>
+                      );
+                    })()}
+                  </td>
                   )}
                   {visibleColumns.has('price') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {customer.price}
-                        <span className="text-xs text-gray-500 ml-0.5">
-                          {isMembershipService(customer.service) ? '/mån' : 'kr'}
-                        </span>
-                      </div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      {customer.price}
+                      <span className="text-xs text-gray-500 ml-0.5">
+                        {isMembershipService(customer.service) ? '/mån' : 'kr'}
+                      </span>
+                    </div>
+                  </td>
                   )}
                   {visibleColumns.has('totalRevenue') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-900 font-semibold">
-                        {getTotalRevenue(customer).toLocaleString('sv-SE')} kr
-                      </div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-900 font-semibold">
+                      {getTotalRevenue(customer).toLocaleString('sv-SE')} kr
+                    </div>
+                  </td>
                   )}
                   {visibleColumns.has('date') && (
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <div className="text-sm text-gray-600">
-                        {format(new Date(customer.date), 'yyyy-MM-dd', { locale: sv })}
-                      </div>
-                    </td>
+                  <td className="px-3 py-3 whitespace-nowrap">
+                    <div className="text-sm text-gray-600">
+                      {format(new Date(customer.date), 'yyyy-MM-dd', { locale: sv })}
+                    </div>
+                  </td>
                   )}
                 </tr>
               );

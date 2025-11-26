@@ -1,6 +1,6 @@
 // Datamodeller för Aktivitus Faktureringsverktyg
 
-export type UserRole = 'admin' | 'coach' | 'platschef';
+export type UserRole = 'superuser' | 'admin' | 'coach' | 'platschef';
 
 export type Place = 
   | 'Stockholm'
@@ -23,7 +23,8 @@ export type PaymentMethod =
   | 'Faktura'
   | 'Swish'
   | 'Förskottsbetalning'
-  | 'Klarna';
+  | 'Klarna'
+  | 'iZettle';
 
 export type InvoiceStatus =
   | 'Betald'
@@ -60,7 +61,8 @@ export type Sport =
   | 'OCR'
   | 'Swimrun'
   | 'Klassikern'
-  | 'Multisport';
+  | 'Multisport'
+  | 'Ospecificerat';
 
 export type MembershipType =
   | 'Membership Standard'
@@ -204,3 +206,8 @@ export interface FormData {
   sport: Sport;
 }
 
+// Re-export purchases types
+export type { Purchase, PurchaseCategory, PurchaseStatus, StatusHistoryEntry } from './purchases';
+
+// Re-export user profile types
+export type { UserProfile } from './userProfile';

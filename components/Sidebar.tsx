@@ -3,23 +3,22 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { logout, getCurrentUser, getUserRoleSync } from '@/lib/auth';
+import { getUserProfileSync } from '@/lib/userProfile';
 import { UserRole } from '@/types';
 import {
   LayoutDashboard,
   Users,
   UserPlus,
   BarChart3,
-  Settings,
-  FileText,
-  ClipboardList,
   Receipt,
   Calculator,
   User,
   LogOut,
   TrendingUp,
   Clock,
-  Upload,
   Package,
+  ShoppingCart,
+  Shield,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -29,85 +28,73 @@ const menuItems = [
     name: 'Dashboard',
     href: '/',
     icon: LayoutDashboard,
-    roles: ['admin', 'coach', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
   {
     name: 'Kunder',
     href: '/kunder',
     icon: Users,
-    roles: ['admin', 'coach', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
   {
     name: 'Lägg till kund',
     href: '/ny-kund',
     icon: UserPlus,
-    roles: ['admin', 'coach', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
   {
     name: 'Fakturering',
     href: '/fakturering',
     icon: Receipt,
-    roles: ['admin'] as UserRole[],
+    roles: ['superuser', 'admin'] as UserRole[],
   },
   {
     name: 'Personalekonomi',
     href: '/personalekonomi',
     icon: Calculator,
-    roles: ['admin'] as UserRole[],
+    roles: ['superuser', 'admin'] as UserRole[],
   },
   {
     name: 'Statistik',
     href: '/statistik',
     icon: BarChart3,
-    roles: ['admin', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'platschef'] as UserRole[],
   },
   {
     name: 'Intäkter',
     href: '/intakter',
     icon: TrendingUp,
-    roles: ['admin', 'platschef'] as UserRole[],
-  },
-  {
-    name: 'Rapporter',
-    href: '/rapporter',
-    icon: FileText,
-    roles: ['admin', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'platschef'] as UserRole[],
   },
   {
     name: 'Coacher',
     href: '/coacher',
     icon: User,
-    roles: ['admin'] as UserRole[],
+    roles: ['superuser', 'admin'] as UserRole[],
   },
   {
     name: 'Tjänster',
     href: '/tjanster',
     icon: Package,
-    roles: ['admin'] as UserRole[],
+    roles: ['superuser', 'admin'] as UserRole[],
   },
   {
     name: 'Administrativa timmar',
     href: '/administrativa-timmar',
     icon: Clock,
-    roles: ['admin', 'coach', 'platschef'] as UserRole[],
+    roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
   {
-    name: 'Import',
-    href: '/import',
-    icon: Upload,
-    roles: ['admin'] as UserRole[],
+    name: 'Inköp',
+    href: '/inkop',
+    icon: ShoppingCart,
+    roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
   {
-    name: 'Inställningar',
-    href: '/installningar',
-    icon: Settings,
-    roles: ['admin'] as UserRole[],
-  },
-  {
-    name: 'Loggar',
-    href: '/loggar',
-    icon: ClipboardList,
-    roles: ['admin'] as UserRole[],
+    name: 'Användarhantering',
+    href: '/admin/anvandare',
+    icon: Shield,
+    roles: ['superuser'] as UserRole[],
   },
 ];
 
@@ -116,18 +103,26 @@ export default function Sidebar() {
   const router = useRouter();
   const [userEmail, setUserEmail] = useState<string>('admin@aktivitus.se');
   const [userRole, setUserRole] = useState<UserRole>('admin');
+  const [linkedCoach, setLinkedCoach] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   useEffect(() => {
-    // Hämta nuvarande användares e-post och roll
+    // Hämta nuvarande användares e-post, roll och kopplad coach
     const updateUserInfo = () => {
       const currentUser = getCurrentUser();
       if (currentUser?.email) {
         setUserEmail(currentUser.email);
         const role = getUserRoleSync();
         setUserRole(role);
+        
+        // Hämta användarens profil för att se om de är kopplade till en coach
+        const userProfile = getUserProfileSync(currentUser.email);
+        if (userProfile?.linkedCoach) {
+          setLinkedCoach(userProfile.linkedCoach);
+        }
+        
         // Debug: visa roll i konsolen
-        console.log('Current user role:', role, 'Email:', currentUser.email);
+        console.log('Current user role:', role, 'Email:', currentUser.email, 'Linked coach:', userProfile?.linkedCoach);
       }
     };
     
@@ -203,7 +198,11 @@ export default function Sidebar() {
 
       {/* Footer */}
       <div className="p-4 border-t border-[#1E5A7D] space-y-3">
-        <div className="flex items-center gap-3 px-2">
+        <Link
+          href={linkedCoach ? `/coacher/${encodeURIComponent(linkedCoach)}` : '/profil'}
+          className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-[#164B6E] transition cursor-pointer"
+          title={linkedCoach ? 'Se mitt coachkort' : 'Gå till min profil'}
+        >
           <div className="w-10 h-10 bg-[#3B9DD6] rounded-full flex items-center justify-center text-white font-bold">
             {userEmail.charAt(0).toUpperCase()}
           </div>
@@ -211,9 +210,11 @@ export default function Sidebar() {
             <p className="text-sm font-medium text-white truncate">
               {userEmail.split('@')[0]}
             </p>
-            <p className="text-xs text-blue-200 truncate">{userEmail}</p>
+            <p className="text-xs text-blue-200 truncate">
+              {linkedCoach ? linkedCoach : userEmail}
+            </p>
           </div>
-        </div>
+        </Link>
         
         {/* Logout-knapp */}
         <button

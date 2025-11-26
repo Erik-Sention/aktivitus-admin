@@ -258,47 +258,47 @@ Genomgång eller testdel utförd till någon annan - Plus 30 min tid,0,other,Gen
           {/* Quick Seed Buttons */}
           <div className="mb-6 space-y-4">
             <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <h3 className="font-medium text-gray-900 mb-2">Snabb seedning</h3>
-              <p className="text-sm text-gray-700 mb-3">
-                Ladda automatiskt upp alla coacher och tjänster till Firebase direkt från koden (ingen CSV behövs).
-              </p>
-              <button
-                onClick={async () => {
-                  if (!confirm('Detta kommer att ladda upp alla coacher och tjänster till Firebase. Fortsätt?')) return;
+            <h3 className="font-medium text-gray-900 mb-2">Snabb seedning</h3>
+            <p className="text-sm text-gray-700 mb-3">
+              Ladda automatiskt upp alla coacher och tjänster till Firebase direkt från koden (ingen CSV behövs).
+            </p>
+            <button
+              onClick={async () => {
+                if (!confirm('Detta kommer att ladda upp alla coacher och tjänster till Firebase. Fortsätt?')) return;
+                
+                setSeeding(true);
+                setSeedResult(null);
+                
+                try {
+                  const result = await seedAllToFirebase();
+                  setSeedResult(result);
                   
-                  setSeeding(true);
-                  setSeedResult(null);
-                  
-                  try {
-                    const result = await seedAllToFirebase();
-                    setSeedResult(result);
-                    
-                    if (result.coaches.errors.length === 0 && result.services.errors.length === 0) {
-                      alert(`✅ Klar! ${result.coaches.success} coacher och ${result.services.success} tjänster har laddats upp till Firebase.`);
-                    } else {
-                      alert(`Delvis klar: ${result.coaches.success} coacher och ${result.services.success} tjänster sparade. Kontrollera felmeddelanden nedan.`);
-                    }
-                  } catch (error: any) {
-                    alert(`Fel vid seedning: ${error.message}`);
-                  } finally {
-                    setSeeding(false);
+                  if (result.coaches.errors.length === 0 && result.services.errors.length === 0) {
+                    alert(`✅ Klar! ${result.coaches.success} coacher och ${result.services.success} tjänster har laddats upp till Firebase.`);
+                  } else {
+                    alert(`Delvis klar: ${result.coaches.success} coacher och ${result.services.success} tjänster sparade. Kontrollera felmeddelanden nedan.`);
                   }
-                }}
-                disabled={seeding}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {seeding ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Seedar...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-4 h-4" />
-                    Seed coacher och tjänster till Firebase
-                  </>
-                )}
-              </button>
+                } catch (error: any) {
+                  alert(`Fel vid seedning: ${error.message}`);
+                } finally {
+                  setSeeding(false);
+                }
+              }}
+              disabled={seeding}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {seeding ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  Seedar...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Seed coacher och tjänster till Firebase
+                </>
+              )}
+            </button>
             </div>
 
             <div className="p-4 bg-green-50 border border-green-200 rounded-lg">

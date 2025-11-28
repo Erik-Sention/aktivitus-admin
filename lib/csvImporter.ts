@@ -69,11 +69,26 @@ export async function importCustomersFromCSV(csvText: string): Promise<{ success
   const errors: string[] = [];
   let success = 0;
 
+  // Hjälpfunktion för att dela upp namn i förnamn och efternamn
+  const splitName = (fullName: string): { firstName: string; lastName: string } => {
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length === 1) {
+      return { firstName: parts[0], lastName: '' };
+    }
+    const firstName = parts[0];
+    const lastName = parts.slice(1).join(' ');
+    return { firstName, lastName };
+  };
+
   for (const row of rows) {
     try {
       const customerDate = row.date ? new Date(row.date) : new Date();
+      const fullName = row.name || '';
+      const { firstName, lastName } = splitName(fullName);
       const customerData: Omit<Customer, 'id'> = {
-        name: row.name || '',
+        firstName,
+        lastName,
+        name: fullName, // Bakåtkompatibilitet
         email: row.email || '',
         phone: row.phone || undefined,
         date: customerDate,

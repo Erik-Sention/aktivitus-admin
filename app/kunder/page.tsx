@@ -12,6 +12,7 @@ import { Customer } from '@/types';
 import { getUserRoleSync, getCurrentUser } from '@/lib/auth';
 import { logPageView, logCustomerView } from '@/lib/activityLogger';
 import { getUserProfileSync } from '@/lib/userProfile';
+import { getTotalRevenue as calculateTotalRevenue } from '@/lib/revenueCalculations';
 
 type SortField = 'name' | 'email' | 'place' | 'sport' | 'service' | 'status' | 'price' | 'date' | 'serviceCount' | 'membershipDuration' | 'totalMonthsFromStart' | 'totalRevenue' | 'coach' | 'phone' | 'invoiceStatus' | 'paymentMethod' | 'nextInvoice';
 type SortDirection = 'asc' | 'desc';
@@ -391,42 +392,7 @@ export default function CustomersPage() {
 
   // Funktion för att beräkna total omsättning för en kund
   const getTotalRevenue = (customer: Customer): number => {
-    const serviceHistory = customer.serviceHistory && customer.serviceHistory.length > 0 
-      ? customer.serviceHistory 
-      : [{
-          service: customer.service,
-          price: customer.price,
-          date: customer.date,
-          status: customer.status,
-          endDate: undefined,
-          billingInterval: isMembershipService(customer.service) ? 'Månadsvis' : 'Engångsbetalning',
-        }];
-
-    let totalRevenue = 0;
-    serviceHistory.forEach((entry) => {
-      if (isMembershipService(entry.service)) {
-        // Beräkna antal månader tjänsten varit aktiv
-        const startDate = new Date(entry.date);
-        const endDate = entry.endDate ? new Date(entry.endDate) : (entry.status === 'Aktiv' ? new Date() : startDate);
-        
-        // Räkna månader mellan start och slut
-        const monthsDiff = (endDate.getFullYear() - startDate.getFullYear()) * 12 + 
-                          (endDate.getMonth() - startDate.getMonth());
-        const actualMonths = Math.max(1, monthsDiff + 1); // Minst 1 månad
-        
-        // Om det är en engångsbetalning (årlig/kvartalsvis), räkna bara en gång
-        if (entry.billingInterval === 'Årlig' || entry.billingInterval === 'Kvartalsvis') {
-          totalRevenue += entry.price;
-        } else {
-          // Månadsvis betalning - multiplicera med antal månader
-          totalRevenue += entry.price * actualMonths;
-        }
-      } else {
-        // Tester är engångsbetalningar
-        totalRevenue += entry.price;
-      }
-    });
-    return totalRevenue;
+    return calculateTotalRevenue(customer);
   };
 
   // Filtrering och sortering (använder funktionerna ovan)
@@ -445,9 +411,9 @@ export default function CustomersPage() {
           }
         } else {
           // Om sökning gjorts, visa BARA matchande kunder från sökningen
-          const nameParts = customer.name.trim().split(/\s+/);
-          const firstName = nameParts[0] || '';
-          const lastName = nameParts.slice(1).join(' ') || '';
+          // Använd firstName/lastName om de finns, annars dela upp name
+          const firstName = customer.firstName || (customer.name ? customer.name.trim().split(/\s+/)[0] : '');
+          const lastName = customer.lastName || (customer.name ? customer.name.trim().split(/\s+/).slice(1).join(' ') : '');
           
           let matchesSearch = false;
           
@@ -476,7 +442,13 @@ export default function CustomersPage() {
         // Om searchQuery används (nytt enkelt sökfält), använd det
         if (searchQuery.trim().length > 0) {
           const query = searchQuery.toLowerCase().trim();
-          const nameMatch = customer.name.toLowerCase().includes(query);
+          // Sök i både firstName, lastName och name för bakåtkompatibilitet
+          const fullName = customer.firstName && customer.lastName 
+            ? `${customer.firstName} ${customer.lastName}`.toLowerCase()
+            : (customer.name || '').toLowerCase();
+          const nameMatch = fullName.includes(query) || 
+                           (customer.firstName || '').toLowerCase().includes(query) ||
+                           (customer.lastName || '').toLowerCase().includes(query);
           const emailMatch = customer.email.toLowerCase().includes(query);
           
           if (!nameMatch && !emailMatch) {
@@ -484,9 +456,9 @@ export default function CustomersPage() {
           }
         } else {
           // Bakåtkompatibilitet med gamla sökfälten
-        const nameParts = customer.name.trim().split(/\s+/);
-        const firstName = nameParts[0] || '';
-        const lastName = nameParts.slice(1).join(' ') || '';
+          // Använd firstName/lastName om de finns, annars dela upp name
+          const firstName = customer.firstName || (customer.name ? customer.name.trim().split(/\s+/)[0] : '');
+          const lastName = customer.lastName || (customer.name ? customer.name.trim().split(/\s+/).slice(1).join(' ') : '');
         
         let matchesSearch = true;
         
@@ -1437,7 +1409,9 @@ export default function CustomersPage() {
                       href={`/kunder/${customer.id}`}
                       className="font-medium text-[#1E5A7D] hover:text-[#0C3B5C] hover:underline text-sm cursor-pointer"
                     >
-                      {customer.name}
+                      {customer.firstName && customer.lastName 
+                        ? `${customer.firstName} ${customer.lastName}` 
+                        : customer.name || 'Namn saknas'}
                     </Link>
                   </td>
                   )}

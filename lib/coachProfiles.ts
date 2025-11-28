@@ -2,7 +2,9 @@
 import { UserRole } from '@/types';
 
 export interface CoachProfile {
-  name: string;
+  firstName: string;
+  lastName: string;
+  name?: string; // Bakåtkompatibilitet - beräknas från firstName + lastName om saknas
   hourlyRate: number;
   role?: UserRole; // Roll i systemet (superuser, admin, coach, platschef)
   isSeniorCoach?: boolean; // Om coachen är senior coach

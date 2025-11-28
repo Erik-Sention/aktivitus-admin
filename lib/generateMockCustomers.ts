@@ -40,6 +40,14 @@ const lastNames = [
   'Holmgren', 'Abrahamsson', 'Mattsson', 'Isaksson', 'Öberg', 'Lind', 'Hedberg', 'Danielsson',
 ];
 
+const generateFirstName = (): string => {
+  return randomItem(firstNames);
+};
+
+const generateLastName = (): string => {
+  return randomItem(lastNames);
+};
+
 const generateName = (): string => {
   return `${randomItem(firstNames)} ${randomItem(lastNames)}`;
 };
@@ -264,8 +272,10 @@ const generateServiceHistory = (
 
 // Generera en kund
 const generateCustomer = (index: number, startDate: Date, endDate: Date): Customer => {
-  const name = generateName();
-  const email = generateEmail(name);
+  const firstName = generateFirstName();
+  const lastName = generateLastName();
+  const fullName = `${firstName} ${lastName}`;
+  const email = generateEmail(fullName);
   const phone = Math.random() < 0.8 ? generatePhone() : undefined;
   const place = randomItem(PLACES);
   const coach = randomItem(COACHES);
@@ -306,7 +316,9 @@ const generateCustomer = (index: number, startDate: Date, endDate: Date): Custom
   
   return {
     id: `customer_${index}`,
-    name: name,
+    firstName: firstName,
+    lastName: lastName,
+    name: fullName, // Bakåtkompatibilitet
     email: email,
     phone: phone,
     date: customerStartDate,

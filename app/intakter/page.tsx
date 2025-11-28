@@ -7,6 +7,7 @@ import { PLACES, MEMBERSHIPS, TESTS, isMembershipService, isTestService } from '
 import { Customer, ServiceEntry, Place } from '@/types';
 import { DollarSign, TrendingUp, Calendar, MapPin } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { getServiceEndDate, calculateMembershipRevenue } from '@/lib/revenueCalculations';
 
 export default function IntakterPage() {
   const { customers } = useCustomers();
@@ -101,25 +102,38 @@ export default function IntakterPage() {
     filteredCustomers.forEach((customer) => {
       // Hantera huvudtjänsten
       if (isMembershipService(customer.service)) {
-        // För memberships: lägg till månadspriset för varje månad tjänsten var aktiv
         const membershipStart = new Date(customer.date);
         membershipStart.setHours(0, 0, 0, 0);
-        const membershipEnd = customer.status === 'Aktiv' 
-          ? end 
-          : membershipStart;
+        const membershipEnd = getServiceEndDate(customer, end);
+        
+        // Hämta billingInterval från customer (kan finnas i serviceHistory eller som default)
+        const billingInterval = customer.serviceHistory?.find(sh => sh.service === customer.service)?.billingInterval 
+          || (isMembershipService(customer.service) ? 'Månadsvis' : 'Engångsbetalning');
 
-        // Lägg till intäkt för varje månad i perioden
-        const currentMonth = new Date(Math.max(membershipStart.getTime(), start.getTime()));
-        currentMonth.setDate(1);
-        const lastMonth = new Date(Math.min(membershipEnd.getTime(), end.getTime()));
-        lastMonth.setDate(1);
-
-        while (currentMonth <= lastMonth) {
-          const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
-          if (customer.status === 'Aktiv' || membershipEnd >= currentMonth) {
+        // För årlig/kvartalsvis betalning: lägg till en gång i månaden tjänsten startade (om inom perioden)
+        if (billingInterval === 'Årlig' || billingInterval === 'Kvartalsvis') {
+          if (membershipStart >= start && membershipStart <= end) {
+            const monthKey = `${membershipStart.getFullYear()}-${String(membershipStart.getMonth() + 1).padStart(2, '0')}`;
             revenueMap[monthKey] = (revenueMap[monthKey] || 0) + customer.price;
           }
-          currentMonth.setMonth(currentMonth.getMonth() + 1);
+        } else {
+          // För månadsvis betalning: lägg till månadspriset för varje månad tjänsten var aktiv
+          const currentMonth = new Date(Math.max(membershipStart.getTime(), start.getTime()));
+          currentMonth.setDate(1);
+          const lastMonth = new Date(Math.min(membershipEnd.getTime(), end.getTime()));
+          lastMonth.setDate(1);
+
+          while (currentMonth <= lastMonth) {
+            const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
+            const monthStart = new Date(currentMonth);
+            const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+            monthEnd.setHours(23, 59, 59, 999);
+            
+            if (membershipStart <= monthEnd && membershipEnd >= monthStart) {
+              revenueMap[monthKey] = (revenueMap[monthKey] || 0) + customer.price;
+            }
+            currentMonth.setMonth(currentMonth.getMonth() + 1);
+          }
         }
       } else {
         // För tester: engångsbetalning - lägg till i månaden det genomfördes
@@ -139,25 +153,34 @@ export default function IntakterPage() {
           serviceDate.setHours(0, 0, 0, 0);
 
           if (isMembershipService(serviceEntry.service)) {
-            // För memberships: lägg till intäkt för varje månad tjänsten var aktiv
             const serviceStartDate = serviceDate;
-            const serviceEndDate = serviceEntry.endDate
-              ? new Date(serviceEntry.endDate)
-              : (serviceEntry.status === 'Aktiv' ? end : serviceStartDate);
-            serviceEndDate.setHours(23, 59, 59, 999);
+            const serviceEndDate = getServiceEndDate(serviceEntry, end);
+            const billingInterval = serviceEntry.billingInterval || 'Månadsvis';
 
-            // Lägg till intäkt för varje månad i perioden
-            const currentMonth = new Date(Math.max(serviceStartDate.getTime(), start.getTime()));
-            currentMonth.setDate(1);
-            const lastMonth = new Date(Math.min(serviceEndDate.getTime(), end.getTime()));
-            lastMonth.setDate(1);
-
-            while (currentMonth <= lastMonth) {
-              const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
-              if (serviceEntry.status === 'Aktiv' || serviceEndDate >= currentMonth) {
+            // För årlig/kvartalsvis betalning: lägg till en gång i månaden tjänsten startade (om inom perioden)
+            if (billingInterval === 'Årlig' || billingInterval === 'Kvartalsvis') {
+              if (serviceStartDate >= start && serviceStartDate <= end) {
+                const monthKey = `${serviceStartDate.getFullYear()}-${String(serviceStartDate.getMonth() + 1).padStart(2, '0')}`;
                 revenueMap[monthKey] = (revenueMap[monthKey] || 0) + serviceEntry.price;
               }
-              currentMonth.setMonth(currentMonth.getMonth() + 1);
+            } else {
+              // För månadsvis betalning: lägg till intäkt för varje månad tjänsten var aktiv
+              const currentMonth = new Date(Math.max(serviceStartDate.getTime(), start.getTime()));
+              currentMonth.setDate(1);
+              const lastMonth = new Date(Math.min(serviceEndDate.getTime(), end.getTime()));
+              lastMonth.setDate(1);
+
+              while (currentMonth <= lastMonth) {
+                const monthKey = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}`;
+                const monthStart = new Date(currentMonth);
+                const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+                monthEnd.setHours(23, 59, 59, 999);
+                
+                if (serviceStartDate <= monthEnd && serviceEndDate >= monthStart) {
+                  revenueMap[monthKey] = (revenueMap[monthKey] || 0) + serviceEntry.price;
+                }
+                currentMonth.setMonth(currentMonth.getMonth() + 1);
+              }
             }
           } else {
             // För tester: engångsbetalning
@@ -191,29 +214,23 @@ export default function IntakterPage() {
     filteredCustomers.forEach((customer) => {
       // Hantera huvudtjänsten
       if (isMembershipService(customer.service)) {
-        // För memberships: beräkna antal månader tjänsten var aktiv under perioden
         const membershipStart = new Date(customer.date);
         membershipStart.setHours(0, 0, 0, 0);
-        const membershipEnd = customer.status === 'Aktiv' 
-          ? end 
-          : membershipStart;
+        const membershipEnd = getServiceEndDate(customer, end);
+        
+        // Hämta billingInterval från customer (kan finnas i serviceHistory eller som default)
+        const billingInterval = customer.serviceHistory?.find(sh => sh.service === customer.service)?.billingInterval 
+          || (isMembershipService(customer.service) ? 'Månadsvis' : 'Engångsbetalning');
 
-        // Räkna månader inom perioden
-        const periodStart = new Date(Math.max(membershipStart.getTime(), start.getTime()));
-        periodStart.setDate(1);
-        const periodEnd = new Date(Math.min(membershipEnd.getTime(), end.getTime()));
-        periodEnd.setDate(1);
-
-        let monthsInPeriod = 0;
-        const currentMonth = new Date(periodStart);
-        while (currentMonth <= periodEnd) {
-          if (customer.status === 'Aktiv' || membershipEnd >= currentMonth) {
-            monthsInPeriod++;
-          }
-          currentMonth.setMonth(currentMonth.getMonth() + 1);
-        }
-
-        serviceMap[customer.service] = (serviceMap[customer.service] || 0) + (customer.price * monthsInPeriod);
+        const revenue = calculateMembershipRevenue(
+          { ...customer, billingInterval },
+          membershipStart,
+          membershipEnd,
+          start,
+          end
+        );
+        
+        serviceMap[customer.service] = (serviceMap[customer.service] || 0) + revenue;
       } else {
         // För tester: engångsbetalning
         const customerDate = new Date(customer.date);
@@ -231,28 +248,19 @@ export default function IntakterPage() {
           serviceDate.setHours(0, 0, 0, 0);
 
           if (isMembershipService(serviceEntry.service)) {
-            // För memberships: beräkna antal månader inom perioden
             const serviceStartDate = serviceDate;
-            const serviceEndDate = serviceEntry.endDate
-              ? new Date(serviceEntry.endDate)
-              : (serviceEntry.status === 'Aktiv' ? end : serviceStartDate);
-            serviceEndDate.setHours(23, 59, 59, 999);
+            const serviceEndDate = getServiceEndDate(serviceEntry, end);
+            const billingInterval = serviceEntry.billingInterval || 'Månadsvis';
 
-            const periodStart = new Date(Math.max(serviceStartDate.getTime(), start.getTime()));
-            periodStart.setDate(1);
-            const periodEnd = new Date(Math.min(serviceEndDate.getTime(), end.getTime()));
-            periodEnd.setDate(1);
-
-            let monthsInPeriod = 0;
-            const currentMonth = new Date(periodStart);
-            while (currentMonth <= periodEnd) {
-              if (serviceEntry.status === 'Aktiv' || serviceEndDate >= currentMonth) {
-                monthsInPeriod++;
-              }
-              currentMonth.setMonth(currentMonth.getMonth() + 1);
-            }
-
-            serviceMap[serviceEntry.service] = (serviceMap[serviceEntry.service] || 0) + (serviceEntry.price * monthsInPeriod);
+            const revenue = calculateMembershipRevenue(
+              { ...serviceEntry, billingInterval },
+              serviceStartDate,
+              serviceEndDate,
+              start,
+              end
+            );
+            
+            serviceMap[serviceEntry.service] = (serviceMap[serviceEntry.service] || 0) + revenue;
           } else {
             // För tester: engångsbetalning
             if (serviceDate >= start && serviceDate <= end) {
@@ -286,28 +294,23 @@ export default function IntakterPage() {
 
     filteredCustomers.forEach((customer) => {
       if (isMembershipService(customer.service)) {
-        // För memberships: beräkna antal månader inom perioden
         const membershipStart = new Date(customer.date);
         membershipStart.setHours(0, 0, 0, 0);
-        const membershipEnd = customer.status === 'Aktiv' 
-          ? end 
-          : membershipStart;
+        const membershipEnd = getServiceEndDate(customer, end);
+        
+        // Hämta billingInterval från customer (kan finnas i serviceHistory eller som default)
+        const billingInterval = customer.serviceHistory?.find(sh => sh.service === customer.service)?.billingInterval 
+          || (isMembershipService(customer.service) ? 'Månadsvis' : 'Engångsbetalning');
 
-        const periodStart = new Date(Math.max(membershipStart.getTime(), start.getTime()));
-        periodStart.setDate(1);
-        const periodEnd = new Date(Math.min(membershipEnd.getTime(), end.getTime()));
-        periodEnd.setDate(1);
-
-        let monthsInPeriod = 0;
-        const currentMonth = new Date(periodStart);
-        while (currentMonth <= periodEnd) {
-          if (customer.status === 'Aktiv' || membershipEnd >= currentMonth) {
-            monthsInPeriod++;
-          }
-          currentMonth.setMonth(currentMonth.getMonth() + 1);
-        }
-
-        placeMap[customer.place] = (placeMap[customer.place] || 0) + (customer.price * monthsInPeriod);
+        const revenue = calculateMembershipRevenue(
+          { ...customer, billingInterval },
+          membershipStart,
+          membershipEnd,
+          start,
+          end
+        );
+        
+        placeMap[customer.place] = (placeMap[customer.place] || 0) + revenue;
       } else {
         // För tester: engångsbetalning
         const customerDate = new Date(customer.date);
@@ -325,26 +328,18 @@ export default function IntakterPage() {
 
           if (isMembershipService(serviceEntry.service)) {
             const serviceStartDate = serviceDate;
-            const serviceEndDate = serviceEntry.endDate
-              ? new Date(serviceEntry.endDate)
-              : (serviceEntry.status === 'Aktiv' ? end : serviceStartDate);
-            serviceEndDate.setHours(23, 59, 59, 999);
+            const serviceEndDate = getServiceEndDate(serviceEntry, end);
+            const billingInterval = serviceEntry.billingInterval || 'Månadsvis';
 
-            const periodStart = new Date(Math.max(serviceStartDate.getTime(), start.getTime()));
-            periodStart.setDate(1);
-            const periodEnd = new Date(Math.min(serviceEndDate.getTime(), end.getTime()));
-            periodEnd.setDate(1);
-
-            let monthsInPeriod = 0;
-            const currentMonth = new Date(periodStart);
-            while (currentMonth <= periodEnd) {
-              if (serviceEntry.status === 'Aktiv' || serviceEndDate >= currentMonth) {
-                monthsInPeriod++;
-              }
-              currentMonth.setMonth(currentMonth.getMonth() + 1);
-            }
-
-            placeMap[customer.place] = (placeMap[customer.place] || 0) + (serviceEntry.price * monthsInPeriod);
+            const revenue = calculateMembershipRevenue(
+              { ...serviceEntry, billingInterval },
+              serviceStartDate,
+              serviceEndDate,
+              start,
+              end
+            );
+            
+            placeMap[customer.place] = (placeMap[customer.place] || 0) + revenue;
           } else {
             if (serviceDate >= start && serviceDate <= end) {
               placeMap[customer.place] = (placeMap[customer.place] || 0) + serviceEntry.price;

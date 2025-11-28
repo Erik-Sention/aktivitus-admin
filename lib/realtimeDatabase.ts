@@ -51,10 +51,43 @@ export const testFirebaseConnection = async (): Promise<boolean> => {
   }
 };
 
+// Hjälpfunktion för att dela upp namn i förnamn och efternamn
+const splitName = (fullName: string): { firstName: string; lastName: string } => {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: '' };
+  }
+  const firstName = parts[0];
+  const lastName = parts.slice(1).join(' ');
+  return { firstName, lastName };
+};
+
 // Konvertera FormData till Customer objekt
 export const formDataToCustomer = (formData: FormData, id?: string): Omit<Customer, 'id'> => {
+  // Om firstName/lastName finns, använd dem, annars dela upp name
+  let firstName: string;
+  let lastName: string;
+  let name: string;
+  
+  if (formData.firstName && formData.lastName) {
+    firstName = formData.firstName;
+    lastName = formData.lastName;
+    name = `${firstName} ${lastName}`.trim();
+  } else if (formData.name) {
+    const split = splitName(formData.name);
+    firstName = split.firstName;
+    lastName = split.lastName;
+    name = formData.name;
+  } else {
+    firstName = '';
+    lastName = '';
+    name = '';
+  }
+  
   return {
-    name: formData.name,
+    firstName,
+    lastName,
+    name, // Bakåtkompatibilitet
     email: formData.email,
     date: new Date(formData.date),
     place: formData.place,
@@ -140,7 +173,12 @@ const validateAndFixCustomerDates = (customer: Customer): Customer => {
           endDate: entryDate,
         };
       } else {
-        // För memberships: kontrollera att de inte överlappar med tidigare memberships
+        // För memberships: 
+        // - Slutdatum sätts ENDAST manuellt när kunden säger upp medlemskapet
+        // - ALDRIG sätt slutdatum automatiskt vid registrering
+        // - Bakåtdatering tillåten utan automatisk slutdatum
+        
+        // Kontrollera att de inte överlappar med tidigare memberships
         const previousMemberships = sortedHistory.slice(0, index).filter(e => 
           !isTestServiceByName(e.service)
         );
@@ -152,76 +190,30 @@ const validateAndFixCustomerDates = (customer: Customer): Customer => {
             ? (lastMembership.endDate instanceof Date ? lastMembership.endDate : new Date(lastMembership.endDate))
             : null;
           
+          // Om föregående membership har ett slutdatum och denna börjar innan det, flytta startdatumet
           if (lastEndDate && entryDate < lastEndDate) {
-            // Denna membership börjar innan den föregående slutat - flytta startdatumet
             needsUpdate = true;
             entryDate = new Date(lastEndDate.getTime() + 1 * 24 * 60 * 60 * 1000); // Minst 1 dag efter
           }
         }
         
+        // Validera att slutdatum inte är före startdatum (om det finns)
         if (entryEndDate && entryEndDate < entryDate) {
-          // Om slutdatum är före startdatum, beräkna korrekt slutdatum
+          // Om slutdatum är före startdatum, ta bort det (det är felaktigt)
           needsUpdate = true;
-          const minimumMonths = getMembershipMinimumMonths(entry.service);
-          
-          if (minimumMonths !== null) {
-            // Använd minimitid
-            const newEndDate = new Date(entryDate);
-            newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
-            return {
-              ...entry,
-              date: entryDate,
-              endDate: newEndDate,
-            };
-          } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
-            // Använd numberOfMonths om det finns
-            const newEndDate = new Date(entryDate);
-            newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
-            return {
-              ...entry,
-              date: entryDate,
-              endDate: newEndDate,
-            };
-          } else {
-            // Fallback: sätt till startdatum + 1 månad
-            const newEndDate = new Date(entryDate);
-            newEndDate.setMonth(newEndDate.getMonth() + 1);
-            return {
-              ...entry,
-              date: entryDate,
-              endDate: newEndDate,
-            };
-          }
+          return {
+            ...entry,
+            date: entryDate,
+            endDate: undefined, // Ta bort felaktigt slutdatum
+          };
         }
         
-        // Om slutdatum saknas men det är ett membership, beräkna det
-        if (!entryEndDate) {
-          needsUpdate = true;
-          const minimumMonths = getMembershipMinimumMonths(entry.service);
-          
-          if (minimumMonths !== null) {
-            const newEndDate = new Date(entryDate);
-            newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
-            return {
-              ...entry,
-              date: entryDate,
-              endDate: newEndDate,
-            };
-          } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
-            const newEndDate = new Date(entryDate);
-            newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
-            return {
-              ...entry,
-              date: entryDate,
-              endDate: newEndDate,
-            };
-          }
-        }
-        
+        // Returnera membership utan att sätta slutdatum automatiskt
+        // Slutdatum finns bara om det sattes manuellt
         return {
           ...entry,
           date: entryDate,
-          endDate: entryEndDate || undefined,
+          endDate: entryEndDate || undefined, // Behåll endast om det finns manuellt
         };
       }
     });
@@ -240,7 +232,8 @@ const validateAndFixCustomerDates = (customer: Customer): Customer => {
       fixedCustomer.date = earliestStartDate;
     }
     
-    // Validera att huvuddatumet är före alla slutdatum
+    // Validera att huvuddatumet är före alla slutdatum (om de finns)
+    // Men bara om det finns faktiska slutdatum (inte för aktiva memberships)
     const allEndDates = fixedCustomer.serviceHistory
       .map(entry => entry.endDate ? (entry.endDate instanceof Date ? entry.endDate : new Date(entry.endDate)) : null)
       .filter((date): date is Date => date !== null);
@@ -288,9 +281,35 @@ const validateAndFixCustomerDates = (customer: Customer): Customer => {
 // Konvertera Realtime Database data till Customer
 const snapshotToCustomer = (id: string, snapshot: DataSnapshot): Customer => {
   const data = snapshot.val();
+  
+  // Hantera firstName/lastName med bakåtkompatibilitet
+  let firstName: string;
+  let lastName: string;
+  let name: string;
+  
+  if (data.firstName && data.lastName) {
+    // Nya formatet med separata fält
+    firstName = data.firstName;
+    lastName = data.lastName;
+    name = data.name || `${firstName} ${lastName}`.trim();
+  } else if (data.name) {
+    // Gammalt format - dela upp name
+    const split = splitName(data.name);
+    firstName = split.firstName;
+    lastName = split.lastName;
+    name = data.name;
+  } else {
+    // Fallback
+    firstName = '';
+    lastName = '';
+    name = '';
+  }
+  
   const customer: Customer = {
     id,
-    name: data.name || '',
+    firstName,
+    lastName,
+    name, // Bakåtkompatibilitet
     email: data.email || '',
     phone: data.phone,
     date: data.date ? new Date(data.date) : new Date(),
@@ -495,68 +514,25 @@ export const updateCustomer = async (
             endDate: entryDate, // Samma datum för tester
           };
         } else {
-          // För memberships: validera och korrigera slutdatum
+          // För memberships: 
+          // - Slutdatum sätts ENDAST manuellt när kunden säger upp medlemskapet
+          // - ALDRIG sätt slutdatum automatiskt
+          
+          // Validera att slutdatum inte är före startdatum (om det finns)
           if (entryEndDate && entryEndDate < entryDate) {
-            // Om slutdatum är före startdatum, beräkna korrekt slutdatum
-            const minimumMonths = getMembershipMinimumMonths(entry.service);
-            
-            if (minimumMonths !== null) {
-              // Använd minimitid
-              const newEndDate = new Date(entryDate);
-              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
-              return {
-                ...entry,
-                date: entryDate,
-                endDate: newEndDate,
-              };
-            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
-              // Använd numberOfMonths om det finns
-              const newEndDate = new Date(entryDate);
-              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
-              return {
-                ...entry,
-                date: entryDate,
-                endDate: newEndDate,
-              };
-            } else {
-              // Fallback: sätt till startdatum + 1 månad
-              const newEndDate = new Date(entryDate);
-              newEndDate.setMonth(newEndDate.getMonth() + 1);
-              return {
-                ...entry,
-                date: entryDate,
-                endDate: newEndDate,
-              };
-            }
+            // Om slutdatum är före startdatum, ta bort det (det är felaktigt)
+            return {
+              ...entry,
+              date: entryDate,
+              endDate: undefined, // Ta bort felaktigt slutdatum
+            };
           }
           
-          // Om slutdatum saknas men det är ett membership, beräkna det
-          if (!entryEndDate) {
-            const minimumMonths = getMembershipMinimumMonths(entry.service);
-            
-            if (minimumMonths !== null) {
-              const newEndDate = new Date(entryDate);
-              newEndDate.setMonth(newEndDate.getMonth() + minimumMonths);
-              return {
-                ...entry,
-                date: entryDate,
-                endDate: newEndDate,
-              };
-            } else if (entry.numberOfMonths && entry.numberOfMonths > 0) {
-              const newEndDate = new Date(entryDate);
-              newEndDate.setMonth(newEndDate.getMonth() + entry.numberOfMonths);
-              return {
-                ...entry,
-                date: entryDate,
-                endDate: newEndDate,
-              };
-            }
-          }
-          
+          // Returnera membership utan att sätta slutdatum automatiskt
           return {
             ...entry,
             date: entryDate,
-            endDate: entryEndDate || undefined,
+            endDate: entryEndDate || undefined, // Behåll endast om det finns manuellt
           };
         }
       });
@@ -710,8 +686,34 @@ export const subscribeToCustomers = (
 // Konvertera Realtime Database data till CoachProfile
 const snapshotToCoachProfile = (snapshot: DataSnapshot): CoachProfile => {
   const data = snapshot.val();
+  
+  // Hantera firstName/lastName med bakåtkompatibilitet
+  let firstName: string;
+  let lastName: string;
+  let name: string;
+  
+  if (data.firstName && data.lastName) {
+    // Nya formatet med separata fält
+    firstName = data.firstName;
+    lastName = data.lastName;
+    name = data.name || `${firstName} ${lastName}`.trim();
+  } else if (data.name) {
+    // Gammalt format - dela upp name
+    const split = splitName(data.name);
+    firstName = split.firstName;
+    lastName = split.lastName;
+    name = data.name;
+  } else {
+    // Fallback
+    firstName = '';
+    lastName = '';
+    name = '';
+  }
+  
   return {
-    name: data.name || '',
+    firstName,
+    lastName,
+    name, // Bakåtkompatibilitet
     hourlyRate: data.hourlyRate || 375,
     isSeniorCoach: data.isSeniorCoach || false,
     mainPlace: data.mainPlace,

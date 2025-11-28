@@ -89,7 +89,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       const firebaseId = await addCustomerToFirebase(customerToSave);
       
       // Logga skapande av kund
-      logCustomerCreate(firebaseId, customerData.name);
+      logCustomerCreate(firebaseId, customerData.name || `${customerData.firstName} ${customerData.lastName}`.trim());
       
       // State uppdateras automatiskt via subscribeToCustomers listener
     } catch (error) {
@@ -106,7 +106,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       const customer = customers.find(c => c.id === id);
       if (customer) {
         const changedFields = Object.keys(updates).join(', ');
-        logCustomerUpdate(id, customer.name, changedFields);
+        logCustomerUpdate(id, customer.name || `${customer.firstName} ${customer.lastName}`.trim(), changedFields);
       }
       
       // State uppdateras automatiskt via subscribeToCustomers listener
@@ -123,7 +123,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
       // Logga borttagning av kund
       const customer = customers.find(c => c.id === id);
       if (customer) {
-        logCustomerDelete(id, customer.name);
+        logCustomerDelete(id, customer.name || `${customer.firstName} ${customer.lastName}`.trim());
       }
       
       // State uppdateras automatiskt via subscribeToCustomers listener

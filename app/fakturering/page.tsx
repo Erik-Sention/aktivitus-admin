@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import { useCustomers } from '@/lib/CustomerContext';
 import { Customer } from '@/types';
-import { isMembershipService, INVOICE_STATUSES } from '@/lib/constants';
+import { isMembershipService, isTestService, INVOICE_STATUSES } from '@/lib/constants';
 import { InvoiceStatus } from '@/types';
 import { format, isAfter, isBefore, addMonths, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 import { sv } from 'date-fns/locale';
-import { Download, CheckCircle, AlertCircle, Clock, Filter, XCircle, ChevronLeft, ChevronRight, Square } from 'lucide-react';
+import { CheckCircle, AlertCircle, Clock, Filter, XCircle, ChevronLeft, ChevronRight, Square } from 'lucide-react';
 import Link from 'next/link';
 import { InvoiceStatusSelect } from '@/components/InvoiceStatusSelect';
+import { shouldShowInvoiceForMonth, getInvoiceAmountForMonth, calculateNextInvoiceDateFromLast, hasInvoiceForMonth } from '@/lib/invoiceManagement';
 
 export default function InvoicingPage() {
   const { customers, updateCustomer } = useCustomers();
@@ -70,24 +71,28 @@ export default function InvoicingPage() {
       const updatedHistory = customer.serviceHistory.map((service) => {
         if (
           service.status === 'Aktiv' &&
-          isMembershipService(service.service) &&
-          service.nextInvoiceDate &&
-          isBefore(new Date(service.nextInvoiceDate), today)
+          isMembershipService(service.service)
         ) {
           // Kolla status för aktuell månad från invoiceHistory
-          const currentMonthStatus = service.invoiceHistory?.[currentMonth] || service.invoiceStatus;
+          const currentMonthStatus = service.invoiceHistory?.[currentMonth];
           
-          // Uppdatera bara om statusen för aktuell månad är "Väntar på betalning"
+          // Uppdatera bara om statusen för aktuell månad är "Väntar på betalning" och månaden har passerat
           if (currentMonthStatus === 'Väntar på betalning') {
-            hasUpdates = true;
-            const invoiceHistory = { ...(service.invoiceHistory || {}) };
-            invoiceHistory[currentMonth] = 'Förfallen';
+            const monthDate = new Date(currentMonth + '-01');
+            const monthEnd = endOfMonth(monthDate);
             
-            return {
-              ...service,
-              invoiceHistory: invoiceHistory,
-              invoiceStatus: 'Förfallen' as const, // För bakåtkompatibilitet
-            };
+            // Om månaden har passerat, markera som förfallen
+            if (isBefore(monthEnd, today)) {
+              hasUpdates = true;
+              const invoiceHistory = { ...(service.invoiceHistory || {}) };
+              invoiceHistory[currentMonth] = 'Förfallen';
+              
+              return {
+                ...service,
+                invoiceHistory: invoiceHistory,
+                invoiceStatus: 'Förfallen' as const, // För bakåtkompatibilitet
+              };
+            }
           }
         }
         return service;
@@ -107,50 +112,61 @@ export default function InvoicingPage() {
   const monthEnd = endOfMonth(new Date(year, month - 1, 1));
   const today = new Date();
 
-  // Samla alla membership-tjänster från alla kunder
-  // Inkluderar: aktiva memberships + memberships under uppsägningstid (med framtida endDate)
-  const membershipServices = customers.flatMap((customer) => {
-    const services: any[] = [];
+
+  // Samla alla membership-tjänster och tester från alla kunder och gruppera per kund
+  // Visar fakturor för vald månad, inte nästa faktura
+  const membershipServicesByCustomer = customers.map((customer) => {
+    const servicesForMonth: any[] = [];
     
-    // Lägg till memberships från serviceHistory
+    // Lägg till memberships och tester från serviceHistory
     if (customer.serviceHistory && customer.serviceHistory.length > 0) {
       customer.serviceHistory
         .filter((service) => {
-          if (!isMembershipService(service.service)) return false;
-          
-          const serviceStart = new Date(service.date);
-          const serviceEnd = service.endDate ? new Date(service.endDate) : null;
-          
-          // Inkludera tjänsten om:
-          // 1. Status är 'Aktiv' (oavsett startdatum)
-          // 2. Tjänsten har ett endDate som är i framtiden eller överlappar med vald månad (uppsägningstid)
-          // 3. Tjänsten överlappade med vald månad (historisk)
-          
-          if (service.status === 'Aktiv') {
-            // Alla aktiva memberships ska visas
-            return true;
+          // Inkludera memberships
+          if (isMembershipService(service.service)) {
+            // Använd shouldShowInvoiceForMonth för att avgöra om fakturan ska visas
+            return shouldShowInvoiceForMonth(service, selectedMonth);
           }
           
-          if (serviceEnd) {
-            // Om tjänsten har ett slutdatum, inkludera om:
-            // - Slutdatumet är i framtiden (under uppsägningstid), ELLER
-            // - Tjänsten överlappade med vald månad (historisk data)
-            return serviceEnd >= monthStart;
+          // Inkludera tester för den månad de genomfördes
+          if (isTestService(service.service)) {
+            const [year, month] = selectedMonth.split('-').map(Number);
+            const serviceDate = new Date(service.date);
+            const serviceMonth = serviceDate.getFullYear() * 12 + serviceDate.getMonth();
+            const selectedMonthNum = year * 12 + (month - 1);
+            
+            // Visa testet bara för den månad det genomfördes
+            return serviceMonth === selectedMonthNum;
           }
           
-          // För andra statusar utan endDate, kolla om de överlappade med vald månad
-          return serviceStart <= monthEnd && serviceStart >= monthStart;
+          return false;
         })
         .forEach((service) => {
-          // Hämta status för vald månad från invoiceHistory
-          // Om ingen specifik status finns för denna månad, använd standardstatusen "Väntar på betalning"
-          const monthStatus = service.invoiceHistory?.[selectedMonth] || 'Väntar på betalning';
+          // För memberships: Hämta status för vald månad från invoiceHistory
+          // För tester: Använd fakturastatus direkt
+          const monthStatus = isMembershipService(service.service)
+            ? (service.invoiceHistory?.[selectedMonth] || 'Väntar på betalning')
+            : (service.invoiceStatus || 'Väntar på betalning');
           
-          services.push({
+          // Beräkna fakturabelopp för denna månad
+          let invoiceAmount = 0;
+          if (isMembershipService(service.service)) {
+            invoiceAmount = getInvoiceAmountForMonth(service, selectedMonth);
+            // Om beloppet är 0 (t.ex. för kvartalsvis men inte faktureringsmånad), hoppa över om ingen faktura finns
+            if (invoiceAmount === 0 && !hasInvoiceForMonth(service, selectedMonth)) {
+              return;
+            }
+          } else {
+            // För tester: använd priset direkt (engångsbetalning)
+            invoiceAmount = service.price;
+          }
+          
+          servicesForMonth.push({
             ...service,
-            customer,
             // Överskriv invoiceStatus med månadsvis status för visning
             invoiceStatus: monthStatus,
+            // Överskriv price med fakturabelopp för denna månad
+            price: invoiceAmount || service.price,
           });
         });
     }
@@ -162,30 +178,77 @@ export default function InvoicingPage() {
       );
       
       if (!mainServiceInHistory) {
-        const serviceStart = new Date(customer.date);
-        const serviceEnd = null; // Aktiva memberships har inget slutdatum än
+        // Skapa en temporär serviceEntry för huvudtjänsten
+        const tempService: ServiceEntry = {
+          id: `main_${customer.id}`,
+          service: customer.service,
+          price: customer.price,
+          date: customer.date,
+          status: customer.status,
+          endDate: undefined,
+          sport: customer.sport,
+          coach: customer.coach,
+          paymentMethod: 'Autogiro',
+          invoiceStatus: 'Väntar på betalning',
+          billingInterval: 'Månadsvis',
+        };
         
-        // Inkludera om status är 'Aktiv' eller om tjänsten överlappade med vald månad
-        if (customer.status === 'Aktiv' || serviceStart <= monthEnd) {
-          services.push({
-            id: `main_${customer.id}`,
-            service: customer.service,
-            price: customer.price,
-            date: customer.date,
-            status: customer.status,
-            endDate: undefined,
-            sport: customer.sport,
-            coach: customer.coach,
-            paymentMethod: 'Autogiro', // Default
-            invoiceStatus: 'Väntar på betalning',
-            billingInterval: 'Månadsvis',
-            customer,
+        if (shouldShowInvoiceForMonth(tempService, selectedMonth)) {
+          const invoiceAmount = getInvoiceAmountForMonth(tempService, selectedMonth);
+          const monthStatus = tempService.invoiceHistory?.[selectedMonth] || 'Väntar på betalning';
+          
+          servicesForMonth.push({
+            ...tempService,
+            invoiceStatus: monthStatus,
+            price: invoiceAmount || customer.price,
           });
         }
       }
     }
     
-    return services;
+    // Om kunden har några tjänster för denna månad, returnera en grupperad post
+    if (servicesForMonth.length > 0) {
+      // Beräkna totalt pris för alla tjänster
+      const totalPrice = servicesForMonth.reduce((sum, s) => sum + s.price, 0);
+      
+      // Hitta den vanligaste betalningsmetoden och statusen
+      const paymentMethods = servicesForMonth.map(s => s.paymentMethod).filter(Boolean);
+      const mostCommonPaymentMethod = paymentMethods.length > 0 
+        ? paymentMethods.reduce((a, b, _, arr) => 
+            arr.filter(v => v === a).length >= arr.filter(v => v === b).length ? a : b
+          )
+        : 'Autogiro';
+      
+      // Om alla tjänster har samma status, använd den. Annars använd den första.
+      const statuses = servicesForMonth.map(s => s.invoiceStatus);
+      const allSameStatus = statuses.every(s => s === statuses[0]);
+      const invoiceStatus = allSameStatus ? statuses[0] : statuses[0];
+      
+      return {
+        customer,
+        services: servicesForMonth,
+        totalPrice,
+        paymentMethod: mostCommonPaymentMethod,
+        invoiceStatus,
+        // Använd första tjänstens nextInvoiceDate eller beräkna från första tjänsten
+        nextInvoiceDate: servicesForMonth[0]?.nextInvoiceDate,
+      };
+    }
+    
+    return null;
+  }).filter(Boolean) as Array<{
+    customer: Customer;
+    services: any[];
+    totalPrice: number;
+    paymentMethod: string;
+    invoiceStatus: string;
+    nextInvoiceDate?: Date;
+  }>;
+
+  // Konvertera till samma format som tidigare för kompatibilitet
+  const membershipServices = membershipServicesByCustomer.flatMap((group) => {
+    // Returnera en rad per kund med alla tjänster
+    return [group];
   });
 
   // Filtrera baserat på betalningsmetod, status och plats
@@ -224,10 +287,10 @@ export default function InvoicingPage() {
   });
 
   // Beräkna total omsättning per kategori
-  const totalToBePaid = toBePaid.reduce((sum, s) => sum + s.price, 0);
-  const totalPaid = paid.reduce((sum, s) => sum + s.price, 0);
-  const totalOverdue = overdue.reduce((sum, s) => sum + s.price, 0);
-  const totalAutogiro = autogiro.reduce((sum, s) => sum + s.price, 0);
+  const totalToBePaid = toBePaid.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalPaid = paid.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalOverdue = overdue.reduce((sum, s) => sum + s.totalPrice, 0);
+  const totalAutogiro = autogiro.reduce((sum, s) => sum + s.totalPrice, 0);
 
   useEffect(() => {
     setSelectedInvoices((prev) => {
@@ -236,7 +299,7 @@ export default function InvoicingPage() {
       }
 
       const validKeys = new Set(
-        filteredServices.map((item) => getInvoiceRowKey(item.customer.id, item.id))
+        filteredServices.map((item) => item.customer.id)
       );
 
       let hasChanged = false;
@@ -264,7 +327,7 @@ export default function InvoicingPage() {
     }
 
     setSelectedInvoices(
-      new Set(filteredServices.map((item) => getInvoiceRowKey(item.customer.id, item.id)))
+      new Set(filteredServices.map((item) => item.customer.id))
     );
   };
 
@@ -280,19 +343,127 @@ export default function InvoicingPage() {
     });
   };
 
-  const handleBulkStatusUpdate = async (status: InvoiceStatus) => {
-    const targets = filteredServices.filter((item) =>
-      selectedInvoices.has(getInvoiceRowKey(item.customer.id, item.id))
-    );
-
-    if (targets.length === 0) {
+  // Sätt faktureringsstatus för ALLA relevanta tjänster för en kund under vald månad
+  const handleSetStatusForCustomerMonth = async (
+    customerId: string,
+    newStatus: InvoiceStatus
+  ) => {
+    const customer = customers.find((c) => c.id === customerId);
+    
+    if (!customer) {
+      console.error('Kund hittades inte:', customerId);
       return;
     }
+    
+    // Logga faktureringsuppdatering
+    import('@/lib/activityLogger').then(({ logInvoiceUpdate }) => {
+      logInvoiceUpdate(customerId, customer.name || `${customer.firstName} ${customer.lastName}`, `Status ändrad till ${newStatus} för ${selectedMonth}`);
+    });
+    
+    if (!customer.serviceHistory || customer.serviceHistory.length === 0) {
+      console.error('Kunden har ingen serviceHistory:', customerId);
+      return;
+    }
+
+    const currentNote = ''; // vi bygger anteckningar per tjänst nedan
+    const timestamp = format(today, 'yyyy-MM-dd', { locale: sv });
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const selectedMonthNum = year * 12 + (month - 1);
+
+    const updatedHistory = customer.serviceHistory.map((entry) => {
+      const serviceDate = new Date(entry.date);
+      const serviceMonth = serviceDate.getFullYear() * 12 + serviceDate.getMonth();
+
+      const isMembership = isMembershipService(entry.service);
+      const isTest = isTestService(entry.service);
+
+      // Bestäm om den här tjänsten hör till den valda månaden:
+      // - Memberships: använd shouldShowInvoiceForMonth
+      // - Tester: samma månad som datumet
+      let belongsToSelectedMonth = false;
+      if (isMembership) {
+        belongsToSelectedMonth = shouldShowInvoiceForMonth(entry, selectedMonth);
+      } else if (isTest) {
+        belongsToSelectedMonth = serviceMonth === selectedMonthNum;
+      }
+
+      if (!belongsToSelectedMonth) {
+        return entry;
+      }
+
+      // Skapa eller uppdatera månadsvis faktureringshistorik
+      const invoiceHistory = { ...(entry.invoiceHistory || {}) };
+      invoiceHistory[selectedMonth] = newStatus;
+
+      // Bestäm vilken invoiceStatus som ska visas som standard (för bakåtkompatibilitet)
+      let defaultInvoiceStatus = entry.invoiceStatus || 'Väntar på betalning';
+      const monthsWithStatus = Object.keys(invoiceHistory).sort().reverse();
+      if (monthsWithStatus.length > 0) {
+        const latestMonth = monthsWithStatus[0];
+        defaultInvoiceStatus = invoiceHistory[latestMonth];
+      } else {
+        defaultInvoiceStatus = newStatus;
+      }
+
+      const update: any = {
+        ...entry,
+        invoiceHistory,
+        invoiceStatus: defaultInvoiceStatus,
+      };
+
+      // Om statusen inte är "Betald" eller "Ej aktuell", lägg till notering
+      if (
+        newStatus !== 'Betald' &&
+        newStatus !== 'Ej aktuell' &&
+        newStatus !== 'Väntar på betalning'
+      ) {
+        update.invoiceNote = currentNote
+          ? `${currentNote}\n[${timestamp}] ${selectedMonth}: ${newStatus}`
+          : `[${timestamp}] ${selectedMonth}: ${newStatus}`;
+      }
+
+      // Uppdatera nästa faktureringsdatum ENDAST för memberships, inte för tester
+      if (isMembership && newStatus === 'Betald') {
+        const selectedMonthDate = new Date(year, month - 1, 1);
+        const billingInterval = entry.billingInterval || 'Månadsvis';
+        const nextInvoiceDate = calculateNextInvoiceDateFromLast(
+          selectedMonthDate,
+          billingInterval
+        );
+
+        if (
+          !entry.nextInvoiceDate ||
+          isAfter(selectedMonthDate, new Date(entry.nextInvoiceDate)) ||
+          format(new Date(entry.nextInvoiceDate), 'yyyy-MM') === selectedMonth
+        ) {
+          update.nextInvoiceDate = nextInvoiceDate;
+        }
+      }
+
+      return update;
+    });
+    
+    try {
+      await updateCustomer(customerId, { serviceHistory: updatedHistory });
+    } catch (error) {
+      console.error('Fel vid uppdatering av kund:', error);
+      alert('Kunde inte uppdatera fakturastatus. Försök igen.');
+    }
+  };
+
+  const handleBulkStatusUpdate = async (status: InvoiceStatus) => {
+    const targets = filteredServices.filter((item) =>
+      selectedInvoices.has(item.customer.id)
+    );
+
+    if (targets.length === 0) return;
 
     setIsBulkUpdating(true);
     try {
       await Promise.all(
-        targets.map((item) => handleSetStatus(item.customer.id, item.id, status))
+        targets.map((item) =>
+          handleSetStatusForCustomerMonth(item.customer.id, status)
+        )
       );
       setSelectedInvoices(new Set());
     } catch (error) {
@@ -303,133 +474,15 @@ export default function InvoicingPage() {
     }
   };
 
-  // Generisk funktion för att sätta faktureringsstatus (för vald månad)
-  const handleSetStatus = async (customerId: string, serviceId: string, newStatus: InvoiceStatus) => {
-    const customer = customers.find((c) => c.id === customerId);
-    
-    // Logga faktureringsuppdatering
-    if (customer) {
-      import('@/lib/activityLogger').then(({ logInvoiceUpdate }) => {
-        logInvoiceUpdate(customerId, customer.name, `Status ändrad till ${newStatus} för ${selectedMonth}`);
-      });
-    }
-    
-    if (customer && customer.serviceHistory) {
-      const service = customer.serviceHistory.find((s) => s.id === serviceId);
-      const currentNote = service?.invoiceNote || '';
-      const timestamp = format(today, 'yyyy-MM-dd', { locale: sv });
-      
-      const updatedHistory = customer.serviceHistory.map((service) => {
-        if (service.id === serviceId) {
-          // Skapa eller uppdatera månadsvis faktureringshistorik
-          // VIKTIGT: Varje månad har sin egen status - ändra INTE tidigare månader
-          // Vi kopierar hela historiken och uppdaterar BARA den valda månaden
-          const invoiceHistory = { ...(service.invoiceHistory || {}) };
-          invoiceHistory[selectedMonth] = newStatus;
-          
-          // Bestäm vilken invoiceStatus som ska visas som standard (för bakåtkompatibilitet)
-          // Använd den senaste månaden som har en status
-          let defaultInvoiceStatus = service.invoiceStatus || 'Väntar på betalning';
-          
-          // Hitta den senaste månaden med en status
-          const monthsWithStatus = Object.keys(invoiceHistory).sort().reverse();
-          if (monthsWithStatus.length > 0) {
-            const latestMonth = monthsWithStatus[0];
-            defaultInvoiceStatus = invoiceHistory[latestMonth];
-          } else {
-            // Om ingen historik finns, använd den nya statusen
-            defaultInvoiceStatus = newStatus;
-          }
-          
-          const update: any = {
-            ...service,
-            invoiceHistory: invoiceHistory,
-            // Behåll invoiceStatus för bakåtkompatibilitet - använd den senaste månaden med status
-            // Men detta påverkar INTE visningen eftersom vi använder invoiceHistory[selectedMonth] för visning
-            invoiceStatus: defaultInvoiceStatus,
-          };
-          
-          // Om statusen inte är "Betald" eller "Ej aktuell", lägg till notering
-          if (newStatus !== 'Betald' && newStatus !== 'Ej aktuell' && newStatus !== 'Väntar på betalning') {
-            update.invoiceNote = currentNote 
-              ? `${currentNote}\n[${timestamp}] ${selectedMonth}: ${newStatus}` 
-              : `[${timestamp}] ${selectedMonth}: ${newStatus}`;
-          }
-          
-          // Om status är "Betald" för vald månad, uppdatera nästa faktureringsdatum till slutet av nästa månad
-          // Men bara om vald månad är den senaste månaden med faktura eller senare
-          if (newStatus === 'Betald') {
-            const [year, month] = selectedMonth.split('-').map(Number);
-            const selectedMonthDate = new Date(year, month - 1, 1);
-            // Sätt nästa faktureringsdatum till slutet av nästa månad
-            const nextMonth = endOfMonth(addMonths(selectedMonthDate, 1));
-            
-            // Uppdatera nästa faktureringsdatum om:
-            // 1. Det inte finns något nästa faktureringsdatum, eller
-            // 2. Vald månad är samma eller senare än månaden för nästa faktureringsdatum
-            if (!service.nextInvoiceDate || 
-                isAfter(selectedMonthDate, new Date(service.nextInvoiceDate)) ||
-                format(new Date(service.nextInvoiceDate), 'yyyy-MM') === selectedMonth) {
-              update.nextInvoiceDate = nextMonth;
-            }
-          }
-          
-          return update;
-        }
-        return service;
-      });
-      
-      try {
-        await updateCustomer(customerId, {
-          serviceHistory: updatedHistory,
-        });
-      } catch (error) {
-        console.error('Fel vid uppdatering av kund:', error);
-      }
-    }
-  };
-
-  const handleMarkAsPaid = (customerId: string, serviceId: string) => {
-    handleSetStatus(customerId, serviceId, 'Betald');
+  const handleMarkAsPaid = (customerId: string) => {
+    handleSetStatusForCustomerMonth(customerId, 'Betald');
   };
 
   const handleWriteOff = (customerId: string, serviceId: string) => {
     if (!confirm('Är du säker på att du vill avskriva denna skuld?')) return;
-    handleSetStatus(customerId, serviceId, 'Ej aktuell');
+    handleSetStatusForCustomerMonth(customerId, 'Ej aktuell');
   };
 
-  const exportInvoiceList = () => {
-    // Skapa CSV-data
-    const csvData = filteredServices.map((item) => ({
-      Namn: item.customer.name,
-      Email: item.customer.email,
-      Tjänst: item.service,
-      Pris: item.price,
-      Betalningsmetod: item.paymentMethod || '-',
-      Status: item.invoiceStatus || '-',
-      Faktureringsintervall: item.billingInterval || '-',
-      'Antal månader': item.numberOfMonths || '-',
-      'Nästa faktura': item.nextInvoiceDate ? format(new Date(item.nextInvoiceDate), 'yyyy-MM-dd') : '-',
-      Plats: item.customer.place,
-    }));
-
-    // Konvertera till CSV-sträng
-    const headers = Object.keys(csvData[0]).join(',');
-    const rows = csvData.map((row) => Object.values(row).join(',')).join('\n');
-    const csv = `${headers}\n${rows}`;
-
-    // Ladda ner filen
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `fakturering_${format(today, 'yyyy-MM-dd')}.csv`;
-    link.click();
-    
-    // Logga export
-    import('@/lib/activityLogger').then(({ logExportData }) => {
-      logExportData('Fakturering');
-    });
-  };
 
   const getInvoiceStatusColor = (status?: string) => {
     switch (status) {
@@ -609,13 +662,6 @@ export default function InvoicingPage() {
             <option value="Åre">Åre</option>
           </select>
 
-          <button
-            onClick={exportInvoiceList}
-            className="ml-auto flex items-center gap-2 px-4 py-2 bg-[#1E5A7D] text-white rounded-lg hover:bg-[#0C3B5C] transition text-sm font-medium"
-          >
-            <Download className="w-4 h-4" />
-            Exportera lista
-          </button>
         </div>
       </div>
 
@@ -732,7 +778,7 @@ export default function InvoicingPage() {
                   Status
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                  Nästa faktura
+                  Förfallodatum
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
                   Plats
@@ -744,12 +790,61 @@ export default function InvoicingPage() {
             </thead>
             <tbody className="divide-y divide-gray-200">
               {filteredServices.map((item) => {
-                const currentStatus = (item.invoiceStatus ?? 'Ej aktuell') as InvoiceStatus;
-                const rowKey = getInvoiceRowKey(item.customer.id, item.id);
+                // Beräkna aggregerad status för alla tjänster denna månad
+                const serviceStatuses = item.services.map(
+                  (service: any) => service.invoiceStatus || 'Väntar på betalning'
+                );
+                let aggregatedStatus: InvoiceStatus = 'Väntar på betalning';
+
+                if (serviceStatuses.every((s) => s === 'Betald')) {
+                  aggregatedStatus = 'Betald';
+                } else if (
+                  serviceStatuses.some(
+                    (s) =>
+                      s === 'Förfallen' ||
+                      s === 'Påminnelse skickad' ||
+                      s === 'Ej betald efter påminnelse' ||
+                      s === 'Överlämnad till inkasso' ||
+                      s === 'Betalning avvisad'
+                  )
+                ) {
+                  // Om någon tjänst är förfallen/påminnelse/inkasso -> visa det
+                  aggregatedStatus =
+                    (serviceStatuses.find(
+                      (s) =>
+                        s === 'Förfallen' ||
+                        s === 'Påminnelse skickad' ||
+                        s === 'Ej betald efter påminnelse' ||
+                        s === 'Överlämnad till inkasso' ||
+                        s === 'Betalning avvisad'
+                    ) as InvoiceStatus) || 'Förfallen';
+                } else if (serviceStatuses.some((s) => s === 'Väntar på betalning')) {
+                  aggregatedStatus = 'Väntar på betalning';
+                } else {
+                  aggregatedStatus = (serviceStatuses[0] ||
+                    'Väntar på betalning') as InvoiceStatus;
+                }
+
+                const currentStatus = aggregatedStatus as InvoiceStatus;
+                const rowKey = item.customer.id;
                 const isSelected = selectedInvoices.has(rowKey);
+                // Kontrollera om någon faktura finns för denna månad
+                // För memberships: kolla invoiceHistory[selectedMonth]
+                // För tester: kolla om tjänsten är för denna månad och har en status
+                const hasAnyInvoice = item.services.some((service: any) => {
+                  if (isTestService(service.service)) {
+                    // För tester: kontrollera om tjänsten är för denna månad
+                    const [year, month] = selectedMonth.split('-').map(Number);
+                    const serviceDate = new Date(service.date);
+                    const serviceMonth = serviceDate.getFullYear() * 12 + serviceDate.getMonth();
+                    const selectedMonthNum = year * 12 + (month - 1);
+                    return serviceMonth === selectedMonthNum && service.invoiceStatus;
+                  }
+                  return hasInvoiceForMonth(service, selectedMonth);
+                });
 
                 return (
-                  <tr key={`${item.customer.id}-${item.id}`} className="hover:bg-gray-50 transition">
+                  <tr key={item.customer.id} className="hover:bg-gray-50 transition">
                     <td className="px-4 py-3">
                       <input
                         type="checkbox"
@@ -769,18 +864,30 @@ export default function InvoicingPage() {
                       <p className="text-xs text-gray-500">{item.customer.email}</p>
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-sm text-gray-900">{item.service}</span>
-                      {item.billingInterval && item.billingInterval !== 'Månadsvis' && (
-                        <p className="text-xs text-gray-500">{item.billingInterval}</p>
-                      )}
+                      <div className="space-y-2">
+                        {item.services.map((service: any, index: number) => (
+                          <div key={service.id} className={index > 0 ? "pt-2 border-t border-gray-100" : ""}>
+                            <span className="text-sm font-semibold text-gray-900 block">{service.service}</span>
+                            {service.sport && service.sport !== 'Ingen' && (
+                              <span className="text-xs text-gray-600 block">Gren: {service.sport}</span>
+                            )}
+                            {service.billingInterval && service.billingInterval !== 'Månadsvis' && (
+                              <span className="text-xs text-blue-600 font-medium block">{service.billingInterval}</span>
+                            )}
+                            {service.coach && (
+                              <span className="text-xs text-gray-500 block">Coach: {service.coach}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-sm font-semibold text-gray-900">
-                        {item.price.toLocaleString('sv-SE')} kr
+                        {item.totalPrice.toLocaleString('sv-SE')} kr
                       </span>
                       <span className="text-xs text-gray-500">/mån</span>
-                      {item.numberOfMonths && item.numberOfMonths > 1 && (
-                        <p className="text-xs text-blue-600">× {item.numberOfMonths} mån</p>
+                      {item.services.length > 1 && (
+                        <p className="text-xs text-blue-600 mt-1">{item.services.length} tjänster</p>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -802,32 +909,48 @@ export default function InvoicingPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      {item.nextInvoiceDate ? (
-                        <span className="text-sm text-gray-900">
-                          {format(new Date(item.nextInvoiceDate), 'd MMM yyyy', { locale: sv })}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
-                      {item.paidUntil && (
-                        <p className="text-xs text-emerald-600">
-                          Betald till: {format(new Date(item.paidUntil), 'd MMM yyyy', { locale: sv })}
-                        </p>
-                      )}
-                      {item.invoiceReference && (
-                        <p className="text-xs text-gray-500">Ref: {item.invoiceReference}</p>
-                      )}
+                      {/* Visa faktureringsdatum för vald månad */}
+                      {(() => {
+                        const [year, month] = selectedMonth.split('-').map(Number);
+                        const invoiceDate = new Date(year, month - 1, 1);
+                        const dueDate = endOfMonth(invoiceDate);
+                        
+                        // Om någon faktura finns för denna månad, visa förfallodatum
+                        if (hasAnyInvoice) {
+                          return (
+                            <div>
+                              <span className="text-sm text-gray-900">
+                                {format(dueDate, 'd MMM yyyy', { locale: sv })}
+                              </span>
+                              <p className="text-xs text-gray-500">Förfallodatum</p>
+                            </div>
+                          );
+                        }
+                        
+                        // Om ingen faktura finns än, visa när den skulle faktureras
+                        return (
+                          <div>
+                            <span className="text-sm text-gray-500">
+                              {format(dueDate, 'd MMM yyyy', { locale: sv })}
+                            </span>
+                            <p className="text-xs text-gray-400">Planerat</p>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       <span className="text-sm text-gray-700">{item.customer.place}</span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex flex-col items-stretch justify-end gap-2 sm:flex-row sm:items-center">
-                        {item.invoiceStatus !== 'Betald' && (
+                        {currentStatus !== 'Betald' && (
                           <button
-                            onClick={() => handleMarkAsPaid(item.customer.id, item.id)}
+                            onClick={() => {
+                              // Markera alla tjänster för denna kund och månad som betalda
+                              handleMarkAsPaid(item.customer.id);
+                            }}
                             className="text-xs px-3 py-1.5 bg-green-600 text-white rounded hover:bg-green-700 transition font-medium flex items-center gap-1"
-                            title="Markera som betald"
+                            title="Markera alla tjänster som betalda"
                           >
                             <CheckCircle className="w-3 h-3" />
                             Betald
@@ -837,12 +960,21 @@ export default function InvoicingPage() {
                         <InvoiceStatusSelect
                           value={currentStatus}
                           options={INVOICE_STATUSES}
-                          onChange={(status) => handleSetStatus(item.customer.id, item.id, status)}
+                          onChange={(status) => {
+                            // Uppdatera alla tjänster för denna kund och månad till vald status
+                            handleSetStatusForCustomerMonth(item.customer.id, status);
+                          }}
                         />
 
                         {item.invoiceStatus !== 'Ej aktuell' && (
                           <button
-                            onClick={() => handleWriteOff(item.customer.id, item.id)}
+                            onClick={() => {
+                              if (confirm('Är du säker på att du vill avskriva alla skulder för denna kund?')) {
+                                item.services.forEach((service: any) => {
+                                  handleWriteOff(item.customer.id, service.id);
+                                });
+                              }
+                            }}
                             className="text-xs px-3 py-1.5 bg-red-50 text-red-700 rounded hover:bg-red-100 transition font-medium flex items-center gap-1"
                           >
                             <XCircle className="w-3 h-3" />

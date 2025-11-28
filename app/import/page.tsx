@@ -20,14 +20,14 @@ export default function ImportPage() {
   const [seedResult, setSeedResult] = useState<{ coaches: { success: number; errors: string[] }; services: { success: number; errors: string[] } } | null>(null);
   const [customerSeedResult, setCustomerSeedResult] = useState<{ success: number; errors: number; total: number } | null>(null);
 
-  // Only admin can access
-  if (userRole !== 'admin') {
+  // Only superuser can access
+  if (userRole !== 'superuser') {
     return (
       <div>
         <Header title="Import" />
         <div className="p-6">
           <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-800">
-            Du har inte behörighet att importera data. Endast administratörer kan göra detta.
+            Du har inte behörighet att importera data. Endast superuser kan göra detta.
           </div>
         </div>
       </div>

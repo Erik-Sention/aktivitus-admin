@@ -9,6 +9,7 @@ import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS
 import { Save, X, Plus, Trash2, Edit2, Copy } from 'lucide-react';
 import { format, endOfMonth, addMonths } from 'date-fns';
 import { sv } from 'date-fns/locale';
+import { calculateNextInvoiceDate } from '@/lib/invoiceCalculations';
 
 // Funktion för att beräkna uppsägningstid baserat på medlemskapstyp
 const getNoticePeriodMonths = (serviceType: string): number => {
@@ -25,9 +26,11 @@ import { SERVICE_COLORS } from '@/lib/constants';
 import { ServiceEntry } from '@/types';
 import MembershipTimeline from '@/components/MembershipTimeline';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
+import ServiceDropdown from '@/components/ServiceDropdown';
 import { getCoachProfileSync } from '@/lib/coachProfiles';
 import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } from '@/lib/realtimeDatabase';
-import { getUserRoleSync } from '@/lib/auth';
+import { getUserRoleSync, getCurrentUser } from '@/lib/auth';
+import { getUserProfileSync } from '@/lib/userProfile';
 
 export default function EditCustomerPage() {
   const router = useRouter();
@@ -202,6 +205,60 @@ export default function EditCustomerPage() {
     }
   }, [editingService, editedServiceData]);
 
+  // Gruppera tjänster i kategorier
+  const groupServices = (servicesList: ServicePrice[]) => {
+    const grouped: Record<string, ServicePrice[]> = {
+      'Memberships - Standard': [],
+      'Memberships - Premium': [],
+      'Memberships - Supreme': [],
+      'Memberships - Iform': [],
+      'Memberships - BAS': [],
+      'Memberships - Övrigt': [],
+      'Tester - Tröskeltest': [],
+      'Tester - VO2max': [],
+      'Tester - Teknikanalys': [],
+      'Tester - Personlig Träning': [],
+      'Tester - Övrigt': [],
+      'Övrigt': [],
+    };
+
+    servicesList.forEach(service => {
+      const serviceName = service.service.toLowerCase();
+      
+      if (service.category === 'membership' || serviceName.includes('membership')) {
+        if (serviceName.includes('standard')) {
+          grouped['Memberships - Standard'].push(service);
+        } else if (serviceName.includes('premium')) {
+          grouped['Memberships - Premium'].push(service);
+        } else if (serviceName.includes('supreme')) {
+          grouped['Memberships - Supreme'].push(service);
+        } else if (serviceName.includes('iform')) {
+          grouped['Memberships - Iform'].push(service);
+        } else if (serviceName.includes('bas')) {
+          grouped['Memberships - BAS'].push(service);
+        } else {
+          grouped['Memberships - Övrigt'].push(service);
+        }
+      } else if (service.category === 'test' || (!service.category && !serviceName.includes('membership'))) {
+        if (serviceName.includes('tröskeltest')) {
+          grouped['Tester - Tröskeltest'].push(service);
+        } else if (serviceName.includes('vo2max') || serviceName.includes('vo2 max')) {
+          grouped['Tester - VO2max'].push(service);
+        } else if (serviceName.includes('teknikanalys')) {
+          grouped['Tester - Teknikanalys'].push(service);
+        } else if (serviceName.includes('personlig träning') || serviceName.includes('pt-klipp') || serviceName.includes('pt ')) {
+          grouped['Tester - Personlig Träning'].push(service);
+        } else {
+          grouped['Tester - Övrigt'].push(service);
+        }
+      } else {
+        grouped['Övrigt'].push(service);
+      }
+    });
+
+    return grouped;
+  };
+
   const handleServiceChange = (selectedService: string) => {
     // ALLTID använd pris från Firebase - INGEN fallback till hårdkodade priser
     let suggestedPrice = 0;
@@ -308,8 +365,10 @@ export default function EditCustomerPage() {
       alert('Slutdatum måste anges för inaktiva, pausade eller genomförda tjänster');
       return;
     }
-    // För aktiva tjänster ska slutdatum INTE fyllas i automatiskt
-
+    // Enligt specifikation:
+    // - Memberships: endDate sätts ALDRIG automatiskt vid registrering, endast manuellt vid uppsägning
+    // - Tester: endDate = startdatum (samma dag)
+    const isTest = isTestService(newService.service);
     const serviceEntry: ServiceEntry = {
       id: `service_${Date.now()}`,
       service: newService.service as any,
@@ -319,7 +378,9 @@ export default function EditCustomerPage() {
       priceNote: newService.priceNote || undefined,
       date: new Date(newService.date),
       status: newService.status as any,
-      endDate: endDate ? new Date(endDate) : undefined,
+      // För tester: startdatum = slutdatum
+      // För memberships: endDate sätts ALDRIG automatiskt
+      endDate: isTest ? new Date(newService.date) : (endDate ? new Date(endDate) : undefined),
       sport: newService.sport as any,
       coach: coachName, // Coach är alltid satt här
       coachHistory: [{ coach: coachName, date: new Date(newService.date) }], // Starta coach-historik
@@ -328,10 +389,12 @@ export default function EditCustomerPage() {
       invoiceStatus: newService.invoiceStatus as any,
       billingInterval: newService.billingInterval as any,
       numberOfMonths: newService.numberOfMonths || undefined,
-      // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+      // Beräkna nästa faktureringsdatum baserat på betalningsintervall
       nextInvoiceDate: newService.nextInvoiceDate 
         ? new Date(newService.nextInvoiceDate) 
-        : (newService.billingInterval === 'Månadsvis' ? endOfMonth(new Date(newService.date)) : undefined),
+        : (isMembershipService(newService.service)
+            ? calculateNextInvoiceDate(new Date(newService.date), newService.billingInterval)
+            : undefined),
       paidUntil: newService.paidUntil ? new Date(newService.paidUntil) : undefined,
       invoiceReference: newService.invoiceReference || undefined,
       invoiceNote: newService.invoiceNote || undefined,
@@ -800,53 +863,17 @@ export default function EditCustomerPage() {
               </div>
             )}
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Rad 1: Datum och Coach */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
-                <label className="block text-sm font-medium text-gray-900 mb-2">Namn</label>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Datum</label>
                 <input
-                  type="text"
-                  value={customer.name}
-                  onChange={(e) => handleUpdateCustomer('name', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  type="date"
+                  value={customer.date ? new Date(customer.date).toISOString().split('T')[0] : ''}
+                  onChange={(e) => handleUpdateCustomer('date', new Date(e.target.value))}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
                 />
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-2">E-post</label>
-                <input
-                  type="email"
-                  value={customer.email}
-                  onChange={(e) => handleUpdateCustomer('email', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-2">Telefonnummer</label>
-                <input
-                  type="tel"
-                  value={customer.phone || ''}
-                  onChange={(e) => handleUpdateCustomer('phone', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                  placeholder="070-123 45 67"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-900 mb-2">Plats</label>
-                <select
-                  value={customer.place}
-                  onChange={(e) => handleUpdateCustomer('place', e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                >
-                  {PLACES.map((place) => (
-                    <option key={place} value={place}>
-                      {place}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div>
                 <label className="block text-sm font-medium text-gray-900 mb-2">Coach</label>
                 <CoachAutocomplete
@@ -865,6 +892,89 @@ export default function EditCustomerPage() {
                   return null;
                 })()}
               </div>
+            </div>
+
+            {/* Rad 2: Förnamn och Efternamn */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Förnamn</label>
+                <input
+                  type="text"
+                  value={customer?.firstName || ''}
+                  onChange={(e) => {
+                    if (!customer) return;
+                    const firstName = e.target.value;
+                    const lastName = customer.lastName || '';
+                    setCustomer({
+                      ...customer,
+                      firstName: firstName,
+                      name: `${firstName} ${lastName}`.trim()
+                    });
+                    setHasUnsavedChanges(true);
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Efternamn</label>
+                <input
+                  type="text"
+                  value={customer?.lastName || ''}
+                  onChange={(e) => {
+                    if (!customer) return;
+                    const lastName = e.target.value;
+                    const firstName = customer.firstName || '';
+                    setCustomer({
+                      ...customer,
+                      lastName: lastName,
+                      name: `${firstName} ${lastName}`.trim()
+                    });
+                    setHasUnsavedChanges(true);
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                />
+              </div>
+            </div>
+
+            {/* Rad 3: E-post, Telefonnummer, Plats */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">E-post</label>
+                <input
+                  type="email"
+                  value={customer.email}
+                  onChange={(e) => handleUpdateCustomer('email', e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Telefonnummer</label>
+                <input
+                  type="tel"
+                  value={customer.phone || ''}
+                  onChange={(e) => handleUpdateCustomer('phone', e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                  placeholder="070-123 45 67"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-900 mb-2">Plats</label>
+                <select
+                  value={customer.place}
+                  onChange={(e) => handleUpdateCustomer('place', e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                >
+                  {PLACES.map((place) => (
+                    <option key={place} value={place}>
+                      {place}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Rad 4: Gren och Status */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
               <div>
                 <label className="block text-sm font-medium text-gray-900 mb-2">Gren</label>
@@ -925,54 +1035,126 @@ export default function EditCustomerPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="md:col-span-4">
                     <label className="block text-sm font-medium text-gray-900 mb-1">Tjänst</label>
+                    <ServiceDropdown
+                      value={newService.service}
+                      onChange={handleServiceChange}
+                      services={services}
+                      className="w-full"
+                    />
+                    {/* Hidden select för formulärkompatibilitet */}
                     <select
                       value={newService.service}
                       onChange={(e) => handleServiceChange(e.target.value)}
-                          className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                      className="hidden"
+                      tabIndex={-1}
                     >
                       {services.length > 0 ? (
-                        <>
-                          <optgroup label="Memberships" className="text-gray-900">
-                            {services
-                              .filter(s => s.category === 'membership' || (!s.category && s.service.toLowerCase().includes('membership')))
-                              .map((service) => (
-                                <option key={service.service} value={service.service}>
-                                  {service.service}
-                                </option>
-                              ))}
-                          </optgroup>
-                          <optgroup label="Tester" className="text-gray-900">
-                            {services
-                              .filter(s => s.category === 'test' || (!s.category && !s.service.toLowerCase().includes('membership')))
-                              .map((service) => (
-                                <option key={service.service} value={service.service}>
-                                  {service.service}
-                                </option>
-                              ))}
-                          </optgroup>
-                          {services.filter(s => s.category && s.category !== 'membership' && s.category !== 'test').length > 0 && (
-                            <optgroup label="Övrigt" className="text-gray-900">
-                              {services
-                                .filter(s => s.category && s.category !== 'membership' && s.category !== 'test')
-                                .map((service) => (
+                        (() => {
+                          const grouped = groupServices(services);
+                          return Object.entries(grouped)
+                            .filter(([_, categoryServices]) => categoryServices.length > 0)
+                            .map(([category, categoryServices]) => (
+                              <optgroup key={category} label={category} className="text-gray-900">
+                                {categoryServices.map((service) => (
                                   <option key={service.service} value={service.service}>
                                     {service.service}
                                   </option>
                                 ))}
-                            </optgroup>
-                          )}
-                        </>
+                              </optgroup>
+                            ));
+                        })()
                       ) : (
                         <>
-                          <optgroup label="Memberships" className="text-gray-900">
-                            {MEMBERSHIPS.map((membership) => (
+                          <optgroup label="Memberships - Standard" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => m.toLowerCase().includes('standard')).map((membership) => (
                               <option key={membership} value={membership}>
                                 {membership}
                               </option>
                             ))}
                           </optgroup>
-                          <optgroup label="Tester" className="text-gray-900">
-                            {TESTS.map((test) => (
+                          <optgroup label="Memberships - Premium" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => m.toLowerCase().includes('premium')).map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Memberships - Supreme" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => m.toLowerCase().includes('supreme')).map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Memberships - Iform" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => m.toLowerCase().includes('iform')).map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Memberships - BAS" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => m.toLowerCase().includes('bas')).map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Memberships - Övrigt" className="text-gray-900">
+                            {MEMBERSHIPS.filter(m => 
+                              !m.toLowerCase().includes('standard') && 
+                              !m.toLowerCase().includes('premium') && 
+                              !m.toLowerCase().includes('supreme') && 
+                              !m.toLowerCase().includes('iform') && 
+                              !m.toLowerCase().includes('bas')
+                            ).map((membership) => (
+                              <option key={membership} value={membership}>
+                                {membership}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester - Tröskeltest" className="text-gray-900">
+                            {TESTS.filter(t => t.toLowerCase().includes('tröskeltest')).map((test) => (
+                              <option key={test} value={test}>
+                                {test}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester - VO2max" className="text-gray-900">
+                            {TESTS.filter(t => t.toLowerCase().includes('vo2max') || t.toLowerCase().includes('vo2 max')).map((test) => (
+                              <option key={test} value={test}>
+                                {test}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester - Teknikanalys" className="text-gray-900">
+                            {TESTS.filter(t => t.toLowerCase().includes('teknikanalys')).map((test) => (
+                              <option key={test} value={test}>
+                                {test}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester - Personlig Träning" className="text-gray-900">
+                            {TESTS.filter(t => 
+                              t.toLowerCase().includes('personlig träning') || 
+                              t.toLowerCase().includes('pt-klipp') || 
+                              t.toLowerCase().includes('pt ')
+                            ).map((test) => (
+                              <option key={test} value={test}>
+                                {test}
+                              </option>
+                            ))}
+                          </optgroup>
+                          <optgroup label="Tester - Övrigt" className="text-gray-900">
+                            {TESTS.filter(t => 
+                              !t.toLowerCase().includes('tröskeltest') && 
+                              !t.toLowerCase().includes('vo2max') && 
+                              !t.toLowerCase().includes('vo2 max') && 
+                              !t.toLowerCase().includes('teknikanalys') && 
+                              !t.toLowerCase().includes('personlig träning') && 
+                              !t.toLowerCase().includes('pt-klipp') && 
+                              !t.toLowerCase().includes('pt ')
+                            ).map((test) => (
                               <option key={test} value={test}>
                                 {test}
                               </option>
@@ -1314,10 +1496,9 @@ export default function EditCustomerPage() {
                           <label className="block text-sm font-medium text-gray-900 mb-1">
                             Tjänst <span className="text-red-500">*</span>
                           </label>
-                          <select
+                          <ServiceDropdown
                             value={editedServiceData.service}
-                            onChange={(e) => {
-                              const selectedService = e.target.value as any;
+                            onChange={(selectedService) => {
                               // Recalculate base price with current sport and senior coach status
                               const basePrice = calculatePrice(
                                 selectedService, 
@@ -1332,14 +1513,9 @@ export default function EditCustomerPage() {
                                 endDate: editedServiceData.endDate || '',
                               });
                             }}
-                            className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                          >
-                            {SERVICES.map((service) => (
-                              <option key={service} value={service}>
-                                {service}
-                              </option>
-                            ))}
-                          </select>
+                            services={services}
+                            className="w-full"
+                          />
                         </div>
 
                         {/* Gren */}
@@ -1935,6 +2111,30 @@ export default function EditCustomerPage() {
             
             <div className="space-y-4">
               <div>
+                <p className="text-sm text-gray-600 mb-1">Namn</p>
+                <p className="font-medium text-gray-900">
+                  {customer.firstName && customer.lastName 
+                    ? `${customer.firstName} ${customer.lastName}` 
+                    : customer.name || '-'}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-600 mb-1">E-post</p>
+                <p className="font-medium text-gray-900">{customer.email || '-'}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Telefonnummer</p>
+                <p className="font-medium text-gray-900">{customer.phone || '-'}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-600 mb-1">Coach</p>
+                <p className="font-medium text-gray-900">{customer.coach || '-'}</p>
+              </div>
+
+              <div className="border-t border-gray-200 pt-4 mt-4">
                 <p className="text-sm text-gray-600 mb-1">Nuvarande tjänst</p>
                 <p className="font-medium text-gray-900">{customer.service}</p>
               </div>

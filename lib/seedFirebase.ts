@@ -108,6 +108,19 @@ const servicesData: Array<{ service: string; basePrice: number; category: string
   { service: 'Genomgång eller testdel utförd till någon annan - Plus 30 min tid', basePrice: 0, category: 'other', description: 'Genomgång utförd till annan', timeBudget: TIME_BUDGETS['Genomgång eller testdel utförd till någon annan'] },
 ];
 
+// Hjälpfunktion för att dela upp namn i förnamn och efternamn
+const splitName = (fullName: string): { firstName: string; lastName: string } => {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length === 1) {
+    // Om bara ett namn finns, använd det som förnamn
+    return { firstName: parts[0], lastName: '' };
+  }
+  // Första delen är förnamn, resten är efternamn
+  const firstName = parts[0];
+  const lastName = parts.slice(1).join(' ');
+  return { firstName, lastName };
+};
+
 // Seed coacher till Firebase
 export const seedCoachesToFirebase = async (): Promise<{ success: number; errors: string[] }> => {
   const errors: string[] = [];
@@ -116,8 +129,11 @@ export const seedCoachesToFirebase = async (): Promise<{ success: number; errors
   try {
     for (const coach of coachData) {
       try {
+        const { firstName, lastName } = splitName(coach.name);
         const profile: CoachProfile = {
-          name: coach.name,
+          firstName: firstName,
+          lastName: lastName,
+          name: coach.name, // Bakåtkompatibilitet
           hourlyRate: 375,
           isSeniorCoach: false,
           mainPlace: coach.mainPlace,
@@ -126,6 +142,8 @@ export const seedCoachesToFirebase = async (): Promise<{ success: number; errors
 
         // Ta bort undefined värden
         const cleanedProfile: any = {
+          firstName: profile.firstName,
+          lastName: profile.lastName,
           name: profile.name,
           hourlyRate: profile.hourlyRate,
           isSeniorCoach: profile.isSeniorCoach,
@@ -133,6 +151,7 @@ export const seedCoachesToFirebase = async (): Promise<{ success: number; errors
         if (profile.mainPlace) cleanedProfile.mainPlace = profile.mainPlace;
         if (profile.secondaryPlace) cleanedProfile.secondaryPlace = profile.secondaryPlace;
 
+        // Använd fullständigt namn som key för bakåtkompatibilitet
         await set(ref(db, `coachProfiles/${profile.name}`), cleanedProfile);
         success++;
       } catch (error: any) {

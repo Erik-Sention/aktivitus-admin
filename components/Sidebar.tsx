@@ -91,13 +91,12 @@ const menuItems = [
     icon: ShoppingCart,
     roles: ['superuser', 'admin', 'coach', 'platschef'] as UserRole[],
   },
-  // Import-sidan är dold för säkerhet
-  // {
-  //   name: 'Import',
-  //   href: '/import',
-  //   icon: Upload,
-  //   roles: ['superuser', 'admin'] as UserRole[],
-  // },
+  {
+    name: 'Import',
+    href: '/import',
+    icon: Upload,
+    roles: ['superuser'] as UserRole[],
+  },
   {
     name: 'Användarhantering',
     href: '/admin/anvandare',

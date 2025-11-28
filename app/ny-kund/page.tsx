@@ -5,12 +5,16 @@ import Header from '@/components/Header';
 import { FormData } from '@/types';
 import { PLACES, SPORTS, MEMBERSHIPS, TESTS, SERVICES, STATUSES, PAYMENT_METHODS, INVOICE_STATUSES, BILLING_INTERVALS, calculatePrice, isTestService, isMembershipService, getTestType } from '@/lib/constants';
 import CoachAutocomplete from '@/components/CoachAutocomplete';
+import ServiceDropdown from '@/components/ServiceDropdown';
 import { getCoachProfileSync } from '@/lib/coachProfiles';
 import { getAllServicesAndPrices, subscribeToServicesAndPrices, ServicePrice } from '@/lib/realtimeDatabase';
 import { Save, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCustomers } from '@/lib/CustomerContext';
 import { endOfMonth, addMonths } from 'date-fns';
+import { calculateNextInvoiceDate } from '@/lib/invoiceCalculations';
+import { getCurrentUser } from '@/lib/auth';
+import { getUserProfileSync } from '@/lib/userProfile';
 
 // Hjälpfunktion för att beräkna slutet av månaden från ett datum
 const getEndOfMonth = (date: Date | string): Date => {
@@ -30,12 +34,24 @@ export default function NewCustomerPage() {
   const { addCustomer } = useCustomers();
   const suggestedPrice = calculatePrice('Membership Standard', 'Löpning', false);
   
+  // Hämta inloggad användares coach för auto-fyllning
+  const getDefaultCoach = (): string => {
+    const currentUser = getCurrentUser();
+    if (currentUser?.email) {
+      const userProfile = getUserProfileSync(currentUser.email);
+      return userProfile?.linkedCoach || '';
+    }
+    return '';
+  };
+
   const [formData, setFormData] = useState<FormData>({
-    name: '',
+    firstName: '',
+    lastName: '',
+    name: '', // Beräknas automatiskt från firstName + lastName
     email: '',
     date: new Date().toISOString().split('T')[0],
     place: 'Stockholm',
-    coach: '',
+    coach: getDefaultCoach(),
     service: 'Membership Standard',
     status: 'Aktiv',
     price: '',
@@ -88,6 +104,17 @@ export default function NewCustomerPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [showSuccess, setShowSuccess] = useState(false);
 
+  // Auto-fyll coach när komponenten laddas
+  useEffect(() => {
+    const currentUser = getCurrentUser();
+    if (currentUser?.email && !formData.coach) {
+      const userProfile = getUserProfileSync(currentUser.email);
+      if (userProfile?.linkedCoach) {
+        setFormData(prev => ({ ...prev, coach: userProfile.linkedCoach! }));
+      }
+    }
+  }, []);
+
   // Ladda tjänster från Firebase
   useEffect(() => {
     const loadServices = async () => {
@@ -95,7 +122,7 @@ export default function NewCustomerPage() {
         const loadedServices = await getAllServicesAndPrices();
         setServices(loadedServices);
       } catch (error) {
-        console.error('Error loading services:', error);
+        // Error loading services
       }
     };
 
@@ -110,6 +137,60 @@ export default function NewCustomerPage() {
       unsubscribe();
     };
   }, []);
+
+  // Gruppera tjänster i kategorier
+  const groupServices = (servicesList: ServicePrice[]) => {
+    const grouped: Record<string, ServicePrice[]> = {
+      'Memberships - Standard': [],
+      'Memberships - Premium': [],
+      'Memberships - Supreme': [],
+      'Memberships - Iform': [],
+      'Memberships - BAS': [],
+      'Memberships - Övrigt': [],
+      'Tester - Tröskeltest': [],
+      'Tester - VO2max': [],
+      'Tester - Teknikanalys': [],
+      'Tester - Personlig Träning': [],
+      'Tester - Övrigt': [],
+      'Övrigt': [],
+    };
+
+    servicesList.forEach(service => {
+      const serviceName = service.service.toLowerCase();
+      
+      if (service.category === 'membership' || serviceName.includes('membership')) {
+        if (serviceName.includes('standard')) {
+          grouped['Memberships - Standard'].push(service);
+        } else if (serviceName.includes('premium')) {
+          grouped['Memberships - Premium'].push(service);
+        } else if (serviceName.includes('supreme')) {
+          grouped['Memberships - Supreme'].push(service);
+        } else if (serviceName.includes('iform')) {
+          grouped['Memberships - Iform'].push(service);
+        } else if (serviceName.includes('bas')) {
+          grouped['Memberships - BAS'].push(service);
+        } else {
+          grouped['Memberships - Övrigt'].push(service);
+        }
+      } else if (service.category === 'test' || (!service.category && !serviceName.includes('membership'))) {
+        if (serviceName.includes('tröskeltest')) {
+          grouped['Tester - Tröskeltest'].push(service);
+        } else if (serviceName.includes('vo2max') || serviceName.includes('vo2 max')) {
+          grouped['Tester - VO2max'].push(service);
+        } else if (serviceName.includes('teknikanalys')) {
+          grouped['Tester - Teknikanalys'].push(service);
+        } else if (serviceName.includes('personlig träning') || serviceName.includes('pt-klipp') || serviceName.includes('pt ')) {
+          grouped['Tester - Personlig Träning'].push(service);
+        } else {
+          grouped['Tester - Övrigt'].push(service);
+        }
+      } else {
+        grouped['Övrigt'].push(service);
+      }
+    });
+
+    return grouped;
+  };
 
   const handleServiceChange = (selectedService: string) => {
     // Hämta senior-status från coach-profilen
@@ -134,6 +215,9 @@ export default function NewCustomerPage() {
       suggestedPrice = 0;
     }
     
+    // Enligt specifikation:
+    // - Tester: Status = "Genomförd"
+    // - Memberships: Status = "Aktiv" vid start
     const autoStatus = isTestService(selectedService) ? 'Genomförd' : 'Aktiv';
     
     setFormData({ ...formData, service: selectedService as any, status: autoStatus as any });
@@ -224,8 +308,12 @@ export default function NewCustomerPage() {
   const validateForm = (): boolean => {
     const newErrors: Partial<Record<keyof FormData, string>> = {};
 
-    if (!formData.name.trim()) {
-      newErrors.name = 'Namn är obligatoriskt';
+    if (!formData.firstName.trim()) {
+      newErrors.firstName = 'Förnamn är obligatoriskt';
+    }
+
+    if (!formData.lastName.trim()) {
+      newErrors.lastName = 'Efternamn är obligatoriskt';
     }
 
     if (!formData.email.trim()) {
@@ -258,7 +346,10 @@ export default function NewCustomerPage() {
     if (validateForm()) {
       try {
         // Spara kunden till Firebase med serviceHistory inkl betalningsinfo
-        // För aktiva tjänster ska endDate inte sättas (tjänsten är pågående)
+        // Enligt specifikation:
+        // - Memberships: endDate sätts ALDRIG automatiskt vid registrering, endast manuellt vid uppsägning
+        // - Tester: endDate = startdatum (samma dag)
+        const isTest = isTestService(formData.service);
         const serviceEntry = {
           id: `service_${Date.now()}`,
           service: formData.service,
@@ -268,8 +359,9 @@ export default function NewCustomerPage() {
           priceNote: priceData.priceNote || undefined,
           date: new Date(formData.date),
           status: formData.status,
-          // endDate sätts bara för inaktiva/pausade/genomförda tjänster
-          endDate: formData.status !== 'Aktiv' ? new Date(formData.date) : undefined,
+          // För tester: startdatum = slutdatum
+          // För memberships: endDate sätts ALDRIG automatiskt
+          endDate: isTest ? new Date(formData.date) : undefined,
           sport: formData.sport,
           coach: formData.coach,
           coachHistory: formData.coach ? [{ coach: formData.coach, date: new Date(formData.date) }] : undefined,
@@ -278,17 +370,21 @@ export default function NewCustomerPage() {
           invoiceStatus: paymentData.invoiceStatus as any,
           billingInterval: paymentData.billingInterval as any,
           numberOfMonths: paymentData.numberOfMonths || undefined,
-          // För månadsvis fakturering: sätt nästa faktureringsdatum till slutet av månaden om inte användaren har angett ett datum
+          // Beräkna nästa faktureringsdatum baserat på betalningsintervall
           nextInvoiceDate: paymentData.nextInvoiceDate 
             ? new Date(paymentData.nextInvoiceDate) 
-            : (paymentData.billingInterval === 'Månadsvis' ? getEndOfMonth(formData.date) : undefined),
+            : (isMembershipService(formData.service) 
+                ? calculateNextInvoiceDate(new Date(formData.date), paymentData.billingInterval)
+                : undefined),
           paidUntil: paymentData.paidUntil ? new Date(paymentData.paidUntil) : undefined,
           invoiceReference: paymentData.invoiceReference || undefined,
           invoiceNote: paymentData.invoiceNote || undefined,
         };
 
         await addCustomer({
-          name: formData.name,
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          name: formData.name || `${formData.firstName} ${formData.lastName}`.trim(),
           email: formData.email,
           phone: formData.phone || undefined,
           date: new Date(formData.date),
@@ -339,8 +435,8 @@ export default function NewCustomerPage() {
 
       <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-100 max-w-4xl">
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Rad 1: Datum, Namn, E-post */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Rad 1: Datum och Coach */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Datum
@@ -352,76 +448,6 @@ export default function NewCustomerPage() {
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
               />
             </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Namn <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
-                  errors.name ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="Ange kundens namn"
-              />
-              {errors.name && (
-                <p className="mt-1 text-sm text-red-600">{errors.name}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                E-post <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
-                  errors.email ? 'border-red-500' : 'border-gray-300'
-                }`}
-                placeholder="exempel@email.se"
-              />
-              {errors.email && (
-                <p className="mt-1 text-sm text-red-600">{errors.email}</p>
-              )}
-            </div>
-          </div>
-
-          {/* Rad 2: Telefonnummer, Plats, Coach */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Telefonnummer
-              </label>
-              <input
-                type="tel"
-                value={formData.phone || ''}
-                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-                placeholder="070-123 45 67"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-900 mb-2">
-                Plats
-              </label>
-              <select
-                value={formData.place}
-                onChange={(e) => setFormData({ ...formData, place: e.target.value as any })}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
-              >
-                {PLACES.map((place) => (
-                  <option key={place} value={place}>
-                    {place}
-                  </option>
-                ))}
-              </select>
-            </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Coach <span className="text-red-500">*</span>
@@ -449,60 +475,234 @@ export default function NewCustomerPage() {
             </div>
           </div>
 
+          {/* Rad 2: Förnamn och Efternamn - större fält */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Förnamn <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.firstName}
+                onChange={(e) => {
+                  const firstName = e.target.value;
+                  const lastName = formData.lastName || '';
+                  setFormData({ 
+                    ...formData, 
+                    firstName,
+                    name: `${firstName} ${lastName}`.trim()
+                  });
+                }}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                  errors.firstName ? 'border-red-500' : 'border-gray-300'
+                }`}
+                placeholder="Förnamn"
+              />
+              {errors.firstName && (
+                <p className="mt-1 text-sm text-red-600">{errors.firstName}</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Efternamn <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={formData.lastName}
+                onChange={(e) => {
+                  const lastName = e.target.value;
+                  const firstName = formData.firstName || '';
+                  setFormData({ 
+                    ...formData, 
+                    lastName,
+                    name: `${firstName} ${lastName}`.trim()
+                  });
+                }}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                  errors.lastName ? 'border-red-500' : 'border-gray-300'
+                }`}
+                placeholder="Efternamn"
+              />
+              {errors.lastName && (
+                <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
+              )}
+            </div>
+          </div>
+
+          {/* Rad 2: E-post, Telefonnummer, Plats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                E-post <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                className={`w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900 ${
+                  errors.email ? 'border-red-500' : 'border-gray-300'
+                }`}
+                placeholder="exempel@email.se"
+              />
+              {errors.email && (
+                <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Telefonnummer
+              </label>
+              <input
+                type="tel"
+                value={formData.phone || ''}
+                onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                placeholder="070-123 45 67"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-900 mb-2">
+                Plats
+              </label>
+              <select
+                value={formData.place}
+                onChange={(e) => setFormData({ ...formData, place: e.target.value as any })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+              >
+                {PLACES.map((place) => (
+                  <option key={place} value={place}>
+                    {place}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Rad 3: Membership/Test, Gren, Status */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <label className="block text-sm font-medium text-gray-900 mb-2">
                 Membership/Test
               </label>
+              <ServiceDropdown
+                value={formData.service}
+                onChange={handleServiceChange}
+                services={services}
+              />
+              {/* Hidden select för formulärkompatibilitet */}
               <select
                 value={formData.service}
                 onChange={(e) => handleServiceChange(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1E5A7D] text-gray-900"
+                className="hidden"
+                tabIndex={-1}
               >
                 {services.length > 0 ? (
-                  <>
-                    <optgroup label="Memberships" className="text-gray-900">
-                      {services
-                        .filter(s => s.category === 'membership' || (!s.category && s.service.toLowerCase().includes('membership')))
-                        .map((service) => (
-                          <option key={service.service} value={service.service}>
-                            {service.service}
-                          </option>
-                        ))}
-                    </optgroup>
-                    <optgroup label="Tester" className="text-gray-900">
-                      {services
-                        .filter(s => s.category === 'test' || (!s.category && !s.service.toLowerCase().includes('membership')))
-                        .map((service) => (
-                          <option key={service.service} value={service.service}>
-                            {service.service}
-                          </option>
-                        ))}
-                    </optgroup>
-                    {services.filter(s => s.category && s.category !== 'membership' && s.category !== 'test').length > 0 && (
-                      <optgroup label="Övrigt" className="text-gray-900">
-                        {services
-                          .filter(s => s.category && s.category !== 'membership' && s.category !== 'test')
-                          .map((service) => (
+                  (() => {
+                    const grouped = groupServices(services);
+                    return Object.entries(grouped)
+                      .filter(([_, categoryServices]) => categoryServices.length > 0)
+                      .map(([category, categoryServices]) => (
+                        <optgroup key={category} label={category} className="text-gray-900">
+                          {categoryServices.map((service) => (
                             <option key={service.service} value={service.service}>
                               {service.service}
                             </option>
                           ))}
-                      </optgroup>
-                    )}
-                  </>
+                        </optgroup>
+                      ));
+                  })()
                 ) : (
                   <>
-                    <optgroup label="Memberships" className="text-gray-900">
-                      {MEMBERSHIPS.map((membership) => (
+                    <optgroup label="Memberships - Standard" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => m.toLowerCase().includes('standard')).map((membership) => (
                         <option key={membership} value={membership}>
                           {membership}
                         </option>
                       ))}
                     </optgroup>
-                    <optgroup label="Tester" className="text-gray-900">
-                      {TESTS.map((test) => (
+                    <optgroup label="Memberships - Premium" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => m.toLowerCase().includes('premium')).map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Memberships - Supreme" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => m.toLowerCase().includes('supreme')).map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Memberships - Iform" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => m.toLowerCase().includes('iform')).map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Memberships - BAS" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => m.toLowerCase().includes('bas')).map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Memberships - Övrigt" className="text-gray-900">
+                      {MEMBERSHIPS.filter(m => 
+                        !m.toLowerCase().includes('standard') && 
+                        !m.toLowerCase().includes('premium') && 
+                        !m.toLowerCase().includes('supreme') && 
+                        !m.toLowerCase().includes('iform') && 
+                        !m.toLowerCase().includes('bas')
+                      ).map((membership) => (
+                        <option key={membership} value={membership}>
+                          {membership}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester - Tröskeltest" className="text-gray-900">
+                      {TESTS.filter(t => t.toLowerCase().includes('tröskeltest')).map((test) => (
+                        <option key={test} value={test}>
+                          {test}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester - VO2max" className="text-gray-900">
+                      {TESTS.filter(t => t.toLowerCase().includes('vo2max') || t.toLowerCase().includes('vo2 max')).map((test) => (
+                        <option key={test} value={test}>
+                          {test}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester - Teknikanalys" className="text-gray-900">
+                      {TESTS.filter(t => t.toLowerCase().includes('teknikanalys')).map((test) => (
+                        <option key={test} value={test}>
+                          {test}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester - Personlig Träning" className="text-gray-900">
+                      {TESTS.filter(t => 
+                        t.toLowerCase().includes('personlig träning') || 
+                        t.toLowerCase().includes('pt-klipp') || 
+                        t.toLowerCase().includes('pt ')
+                      ).map((test) => (
+                        <option key={test} value={test}>
+                          {test}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Tester - Övrigt" className="text-gray-900">
+                      {TESTS.filter(t => 
+                        !t.toLowerCase().includes('tröskeltest') && 
+                        !t.toLowerCase().includes('vo2max') && 
+                        !t.toLowerCase().includes('vo2 max') && 
+                        !t.toLowerCase().includes('teknikanalys') && 
+                        !t.toLowerCase().includes('personlig träning') && 
+                        !t.toLowerCase().includes('pt-klipp') && 
+                        !t.toLowerCase().includes('pt ')
+                      ).map((test) => (
                         <option key={test} value={test}>
                           {test}
                         </option>

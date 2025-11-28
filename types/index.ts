@@ -166,7 +166,9 @@ export interface ServiceEntry {
 
 export interface Customer {
   id: string;
-  name: string;
+  firstName: string;
+  lastName: string;
+  name?: string; // Bakåtkompatibilitet - beräknas från firstName + lastName om saknas
   email: string;
   phone?: string;
   date: Date;
@@ -194,7 +196,9 @@ export interface DashboardStats {
 }
 
 export interface FormData {
-  name: string;
+  firstName: string;
+  lastName: string;
+  name?: string; // Bakåtkompatibilitet
   email: string;
   phone?: string;
   date: string;

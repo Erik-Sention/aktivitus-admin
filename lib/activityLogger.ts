@@ -1,5 +1,5 @@
 // Aktivitetsloggning för användaraktiviteter
-import { getCurrentUser } from './auth';
+import { getCurrentUser, getUserRoleSync } from './auth';
 
 export type ActivityType = 
   | 'page_view'
@@ -84,20 +84,8 @@ export const logActivity = (
   const userEmail = user.email || 'unknown';
   const userId = user.uid || 'unknown';
   
-  // Hämta roll (försök hämta från user objektet eller bestäm från e-post)
-  let userRole = 'unknown';
-  if ('role' in user && user.role) {
-    userRole = user.role;
-  } else {
-    const emailLower = userEmail.toLowerCase();
-    if (emailLower.includes('coach') || emailLower.includes('tranare')) {
-      userRole = 'coach';
-    } else if (emailLower.includes('platschef') || emailLower.includes('manager')) {
-      userRole = 'platschef';
-    } else {
-      userRole = 'admin';
-    }
-  }
+  // Hämta roll från userProfile eller email-baserad mappning
+  const userRole = getUserRoleSync();
   
   const log: ActivityLog = {
     id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,

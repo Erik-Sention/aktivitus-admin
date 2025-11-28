@@ -209,7 +209,7 @@ export default function CoachDetailPage() {
             // (visa alla aktiva medlemskap, även om de startade tidigare)
             servicesList.push({
               id: customer.id,
-              customerName: customer.name,
+              customerName: customer.name || `${customer.firstName} ${customer.lastName}`.trim(),
               customerId: customer.id,
               service: customer.service,
               date: customer.date,
@@ -235,7 +235,7 @@ export default function CoachDetailPage() {
 
           servicesList.push({
             id: customer.id,
-            customerName: customer.name,
+            customerName: customer.name || `${customer.firstName} ${customer.lastName}`.trim(),
             customerId: customer.id,
             service: customer.service,
             date: customer.date,
@@ -284,7 +284,7 @@ export default function CoachDetailPage() {
               if (!exists) {
                 servicesList.push({
                   id: `${customer.id}_${serviceEntry.id}`,
-                  customerName: customer.name,
+                  customerName: customer.name || `${customer.firstName} ${customer.lastName}`.trim(),
                   customerId: customer.id,
                   service: serviceEntry.service,
                   date: serviceEntry.date,

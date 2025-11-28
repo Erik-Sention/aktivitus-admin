@@ -885,7 +885,6 @@ export default function InvoicingPage() {
                       <span className="text-sm font-semibold text-gray-900">
                         {item.totalPrice.toLocaleString('sv-SE')} kr
                       </span>
-                      <span className="text-xs text-gray-500">/mån</span>
                       {item.services.length > 1 && (
                         <p className="text-xs text-blue-600 mt-1">{item.services.length} tjänster</p>
                       )}

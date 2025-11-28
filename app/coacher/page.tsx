@@ -314,13 +314,19 @@ export default function CoacherPage() {
     setAddingCoach(true);
     try {
       const { saveCoachProfile } = await import('@/lib/coachProfiles');
+      const [firstName, ...rest] = newCoachName.trim().split(' ');
+      const lastName = rest.join(' ') || '';
+
       const profile = {
+        firstName: firstName || newCoachName.trim(),
+        lastName,
         name: newCoachName.trim(),
         hourlyRate: newCoachHourlyRate,
         isSeniorCoach: newCoachIsSenior,
         mainPlace: newCoachMainPlace || undefined,
         secondaryPlace: newCoachSecondaryPlace || undefined,
       };
+
       await saveCoachProfile(profile);
       setShowAddCoachModal(false);
       setNewCoachName('');

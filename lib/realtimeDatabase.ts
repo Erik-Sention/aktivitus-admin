@@ -464,9 +464,13 @@ export const getAllCustomers = async (): Promise<Customer[]> => {
     });
     
     return customers;
-  } catch (error) {
-    console.error('Error fetching customers:', error);
-    throw new Error('Kunde inte hämta kunder');
+  } catch (error: any) {
+    // Permission denied är förväntat när användaren inte är inloggad - returnera tom array
+    if (error?.code === 'PERMISSION_DENIED' || error?.message?.includes('Permission denied')) {
+      return [];
+    }
+    // För andra fel, kasta vidare
+    throw error;
   }
 };
 
@@ -684,8 +688,13 @@ export const subscribeToCustomers = (
       
       callback(customers);
     },
-    (error) => {
-      // Returnera tom array vid fel
+    (error: any) => {
+      // Permission denied är förväntat när användaren inte är inloggad - returnera tom array tyst
+      if (error?.code === 'PERMISSION_DENIED' || error?.message?.includes('Permission denied')) {
+        callback([]);
+        return;
+      }
+      // För andra fel, returnera tom array
       callback([]);
     }
   );

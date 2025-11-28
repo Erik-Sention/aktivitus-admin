@@ -797,9 +797,6 @@ export default function EditCustomerPage() {
                     Kopiera
                   </button>
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  Använd detta ID för att hitta kunden i Firebase Realtime Database
-                </p>
               </div>
             )}
             

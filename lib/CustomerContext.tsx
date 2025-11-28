@@ -5,6 +5,7 @@ import { Customer, DashboardStats } from '@/types';
 import { isMembershipService } from './constants';
 import { logCustomerCreate, logCustomerUpdate, logCustomerDelete } from './activityLogger';
 import { getAllCustomers, subscribeToCustomers, addCustomer as addCustomerToFirebase, updateCustomer as updateCustomerInFirebase, deleteCustomer as deleteCustomerFromFirebase } from './realtimeDatabase';
+import { getCurrentUser } from './auth';
 
 // Mock customers - empty by default, will be populated from Firebase
 // mockData.ts is in .gitignore and won't be available in production builds
@@ -32,6 +33,13 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
   // Ladda kunder från Firebase Realtime Database eller mockdata vid första renderingen
   useEffect(() => {
     const loadCustomers = async () => {
+      // Kontrollera om användaren är inloggad innan vi försöker ladda kunder
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        // Användaren är inte inloggad ännu - vänta tills de loggar in
+        return;
+      }
+
       try {
         // Försök ladda från Firebase först
         const firebaseCustomers = await getAllCustomers();
@@ -39,7 +47,7 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
           setCustomers(firebaseCustomers);
         } else if (mockCustomers.length > 0) {
           // Fallback till mockdata om Firebase är tomt
-    setCustomers(mockCustomers);
+          setCustomers(mockCustomers);
         }
       } catch (error) {
         // Om Firebase inte är konfigurerat eller misslyckas, använd mockdata
@@ -51,14 +59,20 @@ export function CustomerProvider({ children }: { children: ReactNode }) {
     
     loadCustomers();
     
-    // Prenumerera på realtidsuppdateringar från Firebase
-    const unsubscribe = subscribeToCustomers((customers) => {
-      // Uppdatera state när data ändras i Firebase
-      setCustomers(customers);
-    });
+    // Prenumerera på realtidsuppdateringar från Firebase (endast om inloggad)
+    let unsubscribe: (() => void) | null = null;
+    const currentUser = getCurrentUser();
+    if (currentUser) {
+      unsubscribe = subscribeToCustomers((customers) => {
+        // Uppdatera state när data ändras i Firebase
+        setCustomers(customers);
+      });
+    }
     
     return () => {
-      unsubscribe();
+      if (unsubscribe) {
+        unsubscribe();
+      }
     };
   }, []);
 

@@ -73,10 +73,16 @@ export default function CoachDetailPage() {
         setEditedProfile(coachProfile);
       } else {
         // Skapa grundprofil om den inte finns
+        const [firstName, ...rest] = coachName.split(' ');
+        const lastName = rest.join(' ') || '';
+
         const defaultProfile: CoachProfile = {
+          firstName: firstName || coachName,
+          lastName,
           name: coachName,
           hourlyRate: getCoachHourlyRateSync(coachName),
         };
+
         setProfile(defaultProfile);
         setEditedProfile(defaultProfile);
       }

@@ -518,8 +518,8 @@ export default function CustomersPage() {
 
       switch (sortField) {
         case 'name':
-          aValue = a.name.toLowerCase();
-          bValue = b.name.toLowerCase();
+          aValue = (a.name || `${a.firstName} ${a.lastName}`.trim()).toLowerCase();
+          bValue = (b.name || `${b.firstName} ${b.lastName}`.trim()).toLowerCase();
           break;
         case 'email':
           aValue = a.email.toLowerCase();

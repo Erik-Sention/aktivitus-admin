@@ -1501,7 +1501,7 @@ export default function EditCustomerPage() {
                             onChange={(selectedService) => {
                               // Recalculate base price with current sport and senior coach status
                               const basePrice = calculatePrice(
-                                selectedService, 
+                                selectedService as any, 
                                 editedServiceData.sport || 'Löpning', 
                                 customer?.isSeniorCoach || false
                               );

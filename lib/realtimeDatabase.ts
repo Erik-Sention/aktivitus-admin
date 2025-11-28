@@ -763,7 +763,10 @@ export const getAllCoachProfiles = async (): Promise<Record<string, CoachProfile
     const profiles: Record<string, CoachProfile> = {};
     snapshot.forEach((childSnapshot) => {
       const profile = snapshotToCoachProfile(childSnapshot);
-      profiles[profile.name] = profile;
+      const profileKey = profile.name || `${profile.firstName} ${profile.lastName}`.trim();
+      if (profileKey) {
+        profiles[profileKey] = profile;
+      }
     });
     
     return profiles;
@@ -839,7 +842,10 @@ export const subscribeToCoachProfiles = (
     const profiles: Record<string, CoachProfile> = {};
     snapshot.forEach((childSnapshot) => {
       const profile = snapshotToCoachProfile(childSnapshot);
-      profiles[profile.name] = profile;
+      const profileKey = profile.name || `${profile.firstName} ${profile.lastName}`.trim();
+      if (profileKey) {
+        profiles[profileKey] = profile;
+      }
     });
     
     callback(profiles);

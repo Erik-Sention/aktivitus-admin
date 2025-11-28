@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import { useCustomers } from '@/lib/CustomerContext';
-import { Customer } from '@/types';
+import { Customer, ServiceEntry } from '@/types';
 import { isMembershipService, isTestService, INVOICE_STATUSES } from '@/lib/constants';
 import { InvoiceStatus } from '@/types';
 import { format, isAfter, isBefore, addMonths, subMonths, startOfMonth, endOfMonth } from 'date-fns';

@@ -18,18 +18,19 @@ if (typeof window !== 'undefined' && !userProfilesCacheInitialized) {
   
   // Ladda profiler direkt först (synkront om möjligt)
   import('./realtimeDatabase').then(({ getUserProfile: loadProfile }) => {
-    // Försök ladda nuvarande användares profil direkt
-    const currentUserEmail = typeof window !== 'undefined' && sessionStorage.getItem('mock_user_session')
-      ? JSON.parse(sessionStorage.getItem('mock_user_session')!).email
-      : null;
-    
-    if (currentUserEmail) {
-      loadProfile(currentUserEmail).then(profile => {
-        if (profile) {
-          userProfilesCache[currentUserEmail] = profile;
-        }
-      }).catch(console.error);
-    }
+    // Försök ladda nuvarande användares profil direkt från Firebase Auth
+    import('./auth').then(({ getCurrentUser }) => {
+      const currentUser = getCurrentUser();
+      const currentUserEmail = currentUser?.email || null;
+      
+      if (currentUserEmail) {
+        loadProfile(currentUserEmail).then(profile => {
+          if (profile) {
+            userProfilesCache[currentUserEmail] = profile;
+          }
+        }).catch(console.error);
+      }
+    }).catch(console.error);
   }).catch(console.error);
   
   // Prenumerera på realtidsuppdateringar

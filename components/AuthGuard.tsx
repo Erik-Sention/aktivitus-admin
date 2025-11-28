@@ -7,8 +7,7 @@ import { getUserProfile } from '@/lib/userProfile';
 import { User } from 'firebase/auth';
 import { UserRole } from '@/types';
 
-// Mock User type för lokal autentisering
-type AuthUser = User | { uid: string; email: string | null; displayName: string | null; role?: UserRole } | null;
+type AuthUser = User | null;
 
 // Definiera routes och vilka roller som har åtkomst
 // Superuser har alltid åtkomst till allt (kollas separat nedan)
